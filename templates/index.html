@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finance</title>
+</head>
+<body>
+    <h1>Gerenciador de Despesas</h1>
+
+    <h2>Adicionar despesas</h2>
+
+    <form action="/adicionar" method = "POST">
+        <label for="nome_despesa">Nome:</label>
+        <input type="text" id="nome_despesa" name="nome_despesa" required>
+
+        <label for="descricao">Descrição:</label>
+        <input type="text" id="descricao" name = "descricao" required>
+
+        <label for="valor">Valor (R$): </label>
+        <input type="number" id="valor" name = "valor" step="0.01" min = "0.01" required>
+
+        <button type="submit">Enviar</button>
+    </form>
+    <form action="/atualizar" method = POST>
+        <label for="id_despesa">ID despesa</label>
+        <input type="number" id="id_despesa" name="id_despesa">
+
+        <label for="nome_despesa">Nome:</label>
+        <input type="text" id="nome_despesa" name="nome_despesa" required>
+
+        <label for="descricao">Descrição:</label>
+        <input type="text" id="descricao" name = "descricao" required>
+
+        <label for="valor">Valor (R$): </label>
+        <input type="number" id="valor" name = "valor" step="0.01" min = "0.01" required>
+
+        <button type="submit">Atualizar</button>
+    </form>
+
+    <table>
+        <tr>
+            <th>ID</th>
+            <th>Nome</th>
+            <th>Descrição</th>
+            <th>Valor</th>
+            <th>Data</th>
+        </tr>
+        {% for resultado in resultados %}
+
+        <tr>
+            <td>{{ resultado[0] }}</td>
+            <td>{{ resultado[1] }}</td>
+            <td>{{ resultado[2] }}</td>
+            <td>R$ {{ "%.2f"|format(resultado [3]) }}</td>
+            <td>{{ resultado[4] }}</td>
+            <td>
+                <form action="/deletar" method="POST" style="display: inline;" onsubmit="return confirm('Você realmente quer deletar essa despesa?');">
+                    <input type="hidden" name="id_despesa" value="{{ resultado[0] }}">
+                    <button type="submit">Deletar</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h2>Resumo despesa</h2>
+    <h3>Quantidade de despesa:  {{ resumo[0] }}</h3>
+    <h3>Total em dinheiro: R$ {{ "%.2f"|format(resumo[1]) }}</h3>
+    
+     <table>
+        <tr>
+            <th>Mês</th>
+            <th>Total</th>
+        </tr>
+        {% for mes, total in resumo_mensal %}
+        <tr>
+            <td>{{ mes }}</td>
+            <td>R$ {{ "%.2f"|format(total) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+</body>
+</html>
