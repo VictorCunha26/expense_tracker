@@ -29,6 +29,19 @@ def index():
     cursor.execute(query_mes)
     resumo_mensal = cursor.fetchall()
 
+    # Agrupa e soma o valor de cada "nome_despesa" repetido,
+    # ordenado do maior gasto pro menor, pegando só o Top 5
+    # (isso alimenta o gráfico de rosca e o ranking do Dashboard)
+    query_top_despesas = """
+        SELECT nome_despesa, SUM(valor) AS total
+        FROM despesas
+        GROUP BY nome_despesa
+        ORDER BY total DESC
+        LIMIT 5
+    """
+    cursor.execute(query_top_despesas)
+    top_despesas = cursor.fetchall()
+
     cursor.close()
     conexao.close()
 
@@ -36,7 +49,8 @@ def index():
         "index.html",
         resultados=resultados,
         resumo=resumo,
-        resumo_mensal=resumo_mensal
+        resumo_mensal=resumo_mensal,
+        top_despesas=top_despesas
     )
 
 @app.route("/adicionar", methods=["POST"])
