@@ -1,49 +1,55 @@
 from flask import Flask, render_template, request, redirect, url_for
 from connection import conectar
+from collections import defaultdict 
 
 
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    conexao = conectar()
-    cursor = conexao.cursor()
+    supabase = conectar()
+    #.table("despesas") aponta para a tabela
+    #.select("*") pede todas as colunas 
+    #.order ("data", desc=True) ordena da mais recente para a mais antiga 
+    #.execute() de fato dispara a requisição e traz resultado 
 
-    # Lista de despesas
-    cursor.execute("SELECT id, nome_despesa, descricao, valor, data FROM despesas")
-    resultados = cursor.fetchall()
+    resposta  = supabase.table("despesas").select("*").order("data", desc=True).execute()
+    despesas  = resposta.data # lista de dicionários
 
-    # Total geral
-    cursor.execute("SELECT COUNT(*), SUM(valor) FROM despesas")
-    resumo = cursor.fetchone()
-    if resumo is None:
-        resumo = 0
 
-    # Total por mês
-    query_mes = """
-        SELECT DATE_FORMAT(data, '%Y-%m') AS mes, SUM(valor) AS total
-        FROM despesas
-        GROUP BY mes
-        ORDER BY mes DESC
-    """
-    cursor.execute(query_mes)
-    resumo_mensal = cursor.fetchall()
+    # O template espera "resultados" com lista de tuplas 
+    # (id, nome, descricao, valor, data) -então convertemos aqui
 
-    # Agrupa e soma o valor de cada "nome_despesa" repetido,
-    # ordenado do maior gasto pro menor, pegando só o Top 5
-    # (isso alimenta o gráfico de rosca e o ranking do Dashboard)
-    query_top_despesas = """
-        SELECT nome_despesa, SUM(valor) AS total
-        FROM despesas
-        GROUP BY nome_despesa
-        ORDER BY total DESC
-        LIMIT 5
-    """
-    cursor.execute(query_top_despesas)
-    top_despesas = cursor.fetchall()
+    resultados = [
+        (d["id"], d["nome_despesa"], d["descricao"], float(d["valor"]), d["data"])
+        for d in despesas
+    ]
 
-    cursor.close()
-    conexao.close()
+    total_qtd = len(despesas)
+    total_valor = sum(float(d["valor"]) for d in despesas)
+    resumo = (total_qtd, total_valor)
+
+
+    # Total por mês: agrupamento manual usando um dicionário
+    # Um dicionário é uma estrutura de dados que guarda informações em pares de chave e valor
+    # defaultdict(float) cria a chave com o valor 0.0 automaticamente na primeira vez que ela aparece
+    # evitando checar "if not existe"
+
+    totais_por_mes = defaultdict(float)
+    for d in despesas:
+        # a "data" vem como string tipo "2026-07-31T14:32:10+00:00"
+        # [:7] pega só "2026-07", equivalente ao DATE_FORMAT(data, '%Y-%m')
+        mes = d["data"][:7]
+        totais_por_mes[mes] += float(d["valor"])
+
+    # Oredena do mês mais recente para o mês mais antigo, igual o ORDER BY mes DESC
+    resumo_mensal  = sorted(totais_por_mes.items(), key = lambda item: item[0], reverse = True) 
+
+    totais_por_nome = defaultdict(float)
+    for d in despesas: 
+        totais_por_nome[d["nome_despesa"]] += float(d["valor"])
+
+    top_despesas = sorted(totais_por_nome.items(), key = lambda item: item[1], reverse = True) 
 
     return render_template(
         "index.html",
@@ -60,17 +66,13 @@ def adicionar():
     descricao = request.form["descricao"]
     valor = request.form["valor"]
 
-    conexao = conectar()
-    cursor = conexao.cursor() 
+    supabase  = conectar()
 
-    query = "INSERT INTO despesas (nome_despesa, descricao, valor) VALUE (%s, %s, %s)"
-    valores = (nome_despesa, descricao, valor)
-
-    cursor.execute(query, valores)
-    conexao.commit()
-
-    cursor.close()
-    conexao.close
+    supabase.table("despesas").insert({
+        "nome_despesa": nome_despesa,
+        "descricao": descricao,
+        "valor": valor
+    }).execute()
 
     return redirect(url_for("index"))
 
@@ -82,17 +84,13 @@ def atualizar_despesa():
     descricao = request.form["descricao"]
     valor = request.form["valor"]
 
-    conexao = conectar()
-    cursor = conexao.cursor()
+    supabase  =  conectar()
 
-    query = "UPDATE despesas SET nome_despesa = %s, descricao = %s, valor = %s WHERE id = %s "
-    valores = (nome_despesa, descricao, valor, id_despesa)
-
-    cursor.execute(query,valores)
-    conexao.commit()
-
-    cursor.close()
-    conexao.close()
+    supabase.table("despesas").update({
+        "nome_despesa": nome_despesa,
+        "descricao": descricao,
+        "valor": valor
+    }).eq("id", id_despesa).execute()
 
     return redirect(url_for("index"))
 
@@ -100,33 +98,10 @@ def atualizar_despesa():
 def deletar_despesa():
     id_despesa  = request.form["id_despesa"]
 
-    conexao = conectar()
-    cursor = conexao.cursor()
+    supabase =conectar()
 
-    query = "DELETE FROM despesas WHERE id = %s"
-
-    cursor.execute(query, (id_despesa,) )
-    conexao.commit()
-
-    cursor.close()
-    conexao.close()
-
+    supabase.table("despesas").delete().eq("id", id_despesa).execute()
     return redirect(url_for("index"))
-
-@app.route("/")
-def resumo():
-    conexao = conectar()
-    cursor = conexao.cursor()
-
-    query = "SELECT COUNT(*), SUM(valor) FROM despesas"
-    cursor.execute(query)
-
-    resumo = cursor.fetchone() #Usa fetchone porque retorna apenas uma linha
-
-    cursor.close()
-    conexao.close()
-
-    return render_template("index.html", resumo=resumo)
 
 if __name__ == "__main__":
     app.run(debug = True)
