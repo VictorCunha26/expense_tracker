@@ -1,23 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 :root{
-    --bg:#0a0b0a;
-    --panel:#111312;
-    --panel-border:#232624;
-    --text:#f2f4f2;
-    --muted:#8b928d;
-    --muted-2:#5f6663;
-    --green:#3ecf8e;
-    --green-dark:#1f5f47;
-    --red:#e35d5d;
+    /* Antes era um tema verde (--green). Trocado por um tema azul,
+       com fundo mais profundo (leve gradiente) em vez de chapado --
+       segue a recomendacao do guia de estetica: "cores dominantes
+       com acentos fortes superam paletas timidas". */
+    --bg:#05070c;
+    --panel:#0d121c;
+    --panel-border:#1e2a3d;
+    --text:#eef2f7;
+    --muted:#7c8aa0;
+    --muted-2:#4d586b;
+    --blue:#3d8bff;
+    --blue-dark:#14335c;
+    --red:#ef5b5b;
     --sidebar-w:220px;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
   body{
-    background:var(--bg);
+    /* gradiente radial sutil no canto superior, em vez de um preto
+       chapado -- da profundidade sem virar decoracao */
+    background:
+      radial-gradient(circle at 18% -8%, #0f2a52 0%, transparent 45%),
+      var(--bg);
+    background-attachment:fixed;
     color:var(--text);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+    font-family:'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
     font-size:14px;
     -webkit-font-smoothing:antialiased;
   }
+  /* Rotulos curtos, valores tecnicos e cabecalhos de tabela usam
+     fonte monoespaçada -- e o que da o ar "tech/dashboard" do
+     exemplo de referencia (USER.CTRL) */
+  .mono, .nav-label, .stat-top, thead th, .panel-sub, .brand-text .sub,
+  .hbar-label, .bar-label, .usecase, .user-info, .legend{
+    font-family:'JetBrains Mono', monospace;
+  }
+
   .app{display:flex;min-height:100vh;}
 
   /* Sidebar */
@@ -32,25 +51,27 @@
   .brand{display:flex;align-items:center;gap:10px;padding:0 6px;}
   .brand-icon{
     width:28px;height:28px;border-radius:6px;
-    background:var(--green-dark);
+    background:var(--blue-dark);
     display:flex;align-items:center;justify-content:center;
-    color:var(--green);
+    color:var(--blue);
     flex-shrink:0;
   }
-  .brand-text .name{font-weight:600;font-size:13.5px;color:var(--text);}
-  .brand-text .sub{font-size:11px;color:var(--muted-2);}
+  .brand-text .name{
+    font-weight:700;font-size:14px;color:var(--text);
+    letter-spacing:.01em;
+  }
+  .brand-text .sub{font-size:10.5px;color:var(--muted-2);letter-spacing:.03em;}
 
-  .nav-label{font-size:10.5px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.05em;padding:0 10px;margin-bottom:2px;}
+  .nav-label{font-size:10.5px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.1em;padding:0 10px;margin-bottom:2px;}
   .nav{display:flex;flex-direction:column;gap:2px;}
   .nav-item{
     display:flex;align-items:center;gap:10px;
     padding:8px 10px;border-radius:7px;
     color:var(--muted);
     font-size:13.5px;
-    cursor:pointer;
   }
   .nav-item svg{width:15px;height:15px;flex-shrink:0;}
-  .nav-item.active{background:#182a22;color:var(--green);}
+  .nav-item.active{background:var(--blue-dark);color:var(--blue);}
 
   /* Main */
   .main{flex:1;display:flex;flex-direction:column;min-width:0;}
@@ -63,11 +84,11 @@
     display:flex;align-items:center;gap:8px;
     border:1px solid var(--panel-border);
     padding:6px 12px;border-radius:8px;
-    font-size:13px;color:var(--text);
+    font-size:12.5px;color:var(--text);
   }
 
   .content{padding:28px 32px 60px;overflow-y:auto;}
-  h1{font-size:26px;font-weight:600;margin-bottom:4px;}
+  h1{font-size:27px;font-weight:700;margin-bottom:4px;letter-spacing:-.01em;}
   .subtitle{color:var(--muted);font-size:13.5px;margin-bottom:22px;}
 
   .stats-grid{
@@ -81,11 +102,14 @@
     border:1px solid var(--panel-border);
     border-radius:12px;
     padding:18px 20px;
+    /* acento superior fino -- um dos "sharp accents" do guia,
+       em vez de deixar o card totalmente neutro */
+    border-top:2px solid var(--blue);
   }
-  .stat-top{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:13px;margin-bottom:14px;}
+  .stat-top{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;}
   .stat-top svg{width:15px;height:15px;opacity:.7;}
-  .stat-value{font-size:30px;font-weight:600;margin-bottom:6px;}
-  .stat-foot{font-size:12px;color:var(--muted-2);}
+  .stat-value{font-size:31px;font-weight:700;margin-bottom:6px;letter-spacing:-.01em;}
+  .stat-foot{font-size:11.5px;color:var(--muted-2);font-family:'JetBrains Mono', monospace;}
 
   .panel{
     background:var(--panel);
@@ -95,8 +119,8 @@
     margin-bottom:20px;
   }
   .panel-head{display:flex;align-items:center;gap:10px;margin-bottom:2px;}
-  .panel-title{font-size:15px;font-weight:600;}
-  .panel-sub{color:var(--muted);font-size:12.5px;margin-bottom:20px;}
+  .panel-title{font-size:15.5px;font-weight:600;letter-spacing:-.005em;}
+  .panel-sub{color:var(--muted);font-size:11.5px;margin-bottom:20px;letter-spacing:.02em;}
 
   .two-col{display:grid;grid-template-columns:1.3fr 1fr;gap:20px;align-items:start;}
 
@@ -104,21 +128,22 @@
   .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
   .form-grid.wide{grid-template-columns:1fr;}
   .field{display:flex;flex-direction:column;gap:6px;}
-  .field label{font-size:12px;color:var(--muted);}
+  .field label{font-size:11px;color:var(--muted);font-family:'JetBrains Mono', monospace;text-transform:uppercase;letter-spacing:.06em;}
   .field input{
-    background:#0d0f0e;
+    background:#0a0e17;
     border:1px solid var(--panel-border);
     border-radius:8px;
     padding:9px 12px;
     color:var(--text);
+    font-family:'Space Grotesk', sans-serif;
     font-size:13.5px;
     outline:none;
   }
-  .field input:focus{border-color:var(--green);}
+  .field input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(61,139,255,.15);}
   .btn-primary{
     display:inline-flex;align-items:center;gap:6px;
-    background:var(--green);
-    color:#08150f;
+    background:var(--blue);
+    color:#04101f;
     font-weight:600;
     padding:9px 18px;border-radius:8px;
     font-size:13px;border:none;cursor:pointer;
@@ -148,10 +173,10 @@
   table{width:100%;border-collapse:collapse;}
   thead th{
     text-align:left;
-    font-size:11.5px;
+    font-size:10.5px;
     color:var(--muted-2);
     text-transform:uppercase;
-    letter-spacing:.04em;
+    letter-spacing:.08em;
     padding:0 10px 10px;
     border-bottom:1px solid var(--panel-border);
   }
@@ -161,25 +186,25 @@
     border-bottom:1px solid var(--panel-border);
   }
   tbody tr:last-child td{border-bottom:none;}
-  tbody tr:hover{background:#151816;}
-  .valor-cell{color:var(--green);font-weight:600;}
+  tbody tr:hover{background:#0e1420;}
+  .valor-cell{color:var(--blue);font-weight:600;font-family:'JetBrains Mono', monospace;}
   .empty-row td{color:var(--muted-2);text-align:center;padding:24px 10px;}
 
   /* Monthly bars (barras horizontais) */
   .hbars{display:flex;flex-direction:column;gap:16px;margin-top:4px;}
   .hbar-row{display:grid;grid-template-columns:70px 1fr 90px;align-items:center;gap:12px;}
-  .hbar-label{font-size:12.5px;color:var(--muted);}
-  .hbar-track{background:#1a1c1a;border-radius:5px;height:14px;overflow:hidden;}
-  .hbar-fill{height:100%;border-radius:5px;background:linear-gradient(90deg,#1f5f47,#3ecf8e);}
-  .hbar-value{font-size:12px;color:var(--text);text-align:right;}
+  .hbar-label{font-size:11.5px;color:var(--muted);}
+  .hbar-track{background:#111826;border-radius:5px;height:14px;overflow:hidden;}
+  .hbar-fill{height:100%;border-radius:5px;background:linear-gradient(90deg,#14335c,#3d8bff);}
+  .hbar-value{font-size:12px;color:var(--text);text-align:right;font-family:'JetBrains Mono', monospace;}
   .empty-hint{color:var(--muted-2);font-size:12.5px;}
 
-
+  /* Abas (nao usadas mais no index atual, mantidas so pra nao quebrar
+     nada caso algum HTML antigo ainda referencie) */
   .view{ display: none; }
-
   .view.view-active { display: block; }
 
-
+  /* Grafico de barras verticais */
   .bars{
     display: flex;
     align-items: flex-end;
@@ -197,16 +222,16 @@
   .bar{
     width: 100%;
     border-radius: 5px 5px 0 0;
-    background: linear-gradient(180deg, #0f1f18 0%, #2c8f68 100%);
+    background: linear-gradient(180deg, #0f2340 0%, #3d8bff 100%);
     min-height: 2px;
   }
   .bar-label{
     margin-top: 10px;
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--muted-2);
   }
 
-  /* Gráfico de rosca (Dashboard > Despesas por Nome) */
+  /* Grafico de rosca (Despesas por Nome) */
   .donut-wrap {
     display: flex;
     align-items: center;
@@ -231,12 +256,65 @@
     flex-wrap: wrap;
     gap: 10px 18px;
     justify-content: center;
-    font-size: 12.5px;
+    font-size: 11.5px;
     color: var(--muted);
     margin-top: 14px;
   }
   .legend-item { display: flex; align-items: center; gap: 6px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Paginas de login/cadastro -- layout centralizado, sem sidebar */
+  .auth-body{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    min-height:100vh;
+  }
+  .auth-wrap{ width:100%; max-width:380px; padding:20px; }
+  .auth-card{
+    background:var(--panel);
+    border:1px solid var(--panel-border);
+    border-top:2px solid var(--blue);
+    border-radius:14px;
+    padding:32px 28px;
+  }
+  .auth-title{ font-size:23px; font-weight:700; text-align:center; letter-spacing:-.01em; }
+  .auth-flash{
+    background:#1c1212;
+    border:1px solid #3a2323;
+    color:var(--red);
+    font-size:12.5px;
+    padding:10px 14px;
+    border-radius:8px;
+    margin-bottom:16px;
+    font-family:'JetBrains Mono', monospace;
+  }
+  .auth-footer{
+    text-align:center;
+    font-size:12.5px;
+    color:var(--muted);
+    margin-top:20px;
+  }
+  .auth-footer a{ color:var(--blue); text-decoration:none; }
+  .auth-footer a:hover{ text-decoration:underline; }
+
+  /* Info do usuario logado + botao Sair, no topbar do dashboard */
+  .user-info{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    font-size:12px;
+    color:var(--muted);
+  }
+  .logout-link{
+    color:var(--red);
+    text-decoration:none;
+    border:1px solid #3a2323;
+    padding:6px 12px;
+    border-radius:8px;
+    font-family:'JetBrains Mono', monospace;
+  }
+  .logout-link:hover{ background:#1c1212; }
 
   @media(max-width:900px){
     .stats-grid{grid-template-columns:1fr 1fr;}

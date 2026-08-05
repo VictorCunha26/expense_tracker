@@ -23,8 +23,6 @@
     <div>
       <div class="nav-label">Menu</div>
       <div class="nav">
-        <!-- Não tem mais aba/troca de view — sobrou só um item fixo,
-             sem onclick, já que agora existe uma página só -->
         <div class="nav-item active">
             <svg viewBox="0 0 24 24" fill="none"><path d="M7 3h8l4 4v14a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6"/><path d="M9 12h6M9 16h6M9 8h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             Despesas
@@ -36,7 +34,10 @@
   <div class="main">
     <div class="topbar">
       <div></div>
-      <div class="usecase">Gerenciador de Despesas</div>
+      <div class="user-info">
+        <span>{{ email }}</span>
+        <a href="{{ url_for('logout') }}" class="logout-link">Sair</a>
+      </div>
     </div>
 
     <div class="content">
@@ -74,7 +75,7 @@
               <div class="panel-title">Adicionar Despesa</div>
             </div>
             <div class="panel-sub">Registre um novo gasto</div>
-            <form action="/adicionar" method="POST">
+            <form action="{{ url_for('adicionar') }}" method="POST">
               <div class="form-grid">
                 <div class="field">
                   <label for="nome_despesa">Nome</label>
@@ -100,7 +101,7 @@
               <div class="panel-title">Atualizar Despesa</div>
             </div>
             <div class="panel-sub">Edite um lançamento pelo ID</div>
-            <form action="/atualizar" method="POST">
+            <form action="{{ url_for('atualizar_despesa') }}" method="POST">
               <div class="form-grid">
                 <div class="field">
                   <label for="id_despesa">ID da despesa</label>
@@ -150,7 +151,7 @@
                   <td class="valor-cell">R$ {{ "%.2f"|format(resultado[3]) }}</td>
                   <td>{{ resultado[4] }}</td>
                   <td>
-                    <form action="/deletar" method="POST" style="display:inline;" onsubmit="return confirm('Você realmente quer deletar essa despesa?');">
+                    <form action="{{ url_for('deletar_despesa') }}" method="POST" style="display:inline;" onsubmit="return confirm('Você realmente quer deletar essa despesa?');">
                       <input type="hidden" name="id_despesa" value="{{ resultado[0] }}">
                       <button type="submit" class="btn-danger-ghost">Deletar</button>
                     </form>
@@ -189,17 +190,18 @@
         </div>
       </div>
 
-      <!-- Segunda fileira: os dois gráficos que antes ficavam na aba
-           Dashboard, agora direto aqui na página de Despesas -->
+      <!-- Segunda fileira: gráfico de rosca (Despesas por Nome) e
+           ranking em barras horizontais (Ranking de Gastos) -->
       <div class="two-col">
 
-        <!-- PAINEL 1: gráfico de rosca com as 5 despesas que mais pesam -->
         <div class="panel">
           <div class="panel-title">Despesas por Nome</div>
           <div class="panel-sub">Top 5 — participação no total</div>
 
           {% if top_despesas %}
-            {% set cores = ['#3ecf8e', '#4d8dff', '#e8b13c', '#e35d5d', '#8b5cf6'] %}
+            {# Paleta trocada pro tema azul: tons de azul/ciano/roxo em
+               vez da paleta anterior (verde/laranja/vermelho/roxo) #}
+            {% set cores = ['#3d8bff', '#22b8cf', '#7c5cff', '#5b8def', '#2fd9c4'] %}
 
             {% set total_top = namespace(value=0) %}
             {% for nome, total in top_despesas %}
@@ -234,7 +236,6 @@
           {% endif %}
         </div>
 
-        <!-- PAINEL 2: ranking em barras horizontais -->
         <div class="panel">
           <div class="panel-title">Ranking de Gastos</div>
           <div class="panel-sub">Do maior pro menor</div>
