@@ -69,9 +69,13 @@
     padding:8px 10px;border-radius:7px;
     color:var(--muted);
     font-size:13.5px;
+    cursor:pointer;
+    user-select:none;
   }
+  .nav-item:hover{background:#0e1420;color:var(--text);}
   .nav-item svg{width:15px;height:15px;flex-shrink:0;}
   .nav-item.active{background:var(--blue-dark);color:var(--blue);}
+  .nav-item.active:hover{background:var(--blue-dark);color:var(--blue);}
 
   /* Main */
   .main{flex:1;display:flex;flex-direction:column;min-width:0;}
@@ -199,8 +203,8 @@
   .hbar-value{font-size:12px;color:var(--text);text-align:right;font-family:'JetBrains Mono', monospace;}
   .empty-hint{color:var(--muted-2);font-size:12.5px;}
 
-  /* Abas (nao usadas mais no index atual, mantidas so pra nao quebrar
-     nada caso algum HTML antigo ainda referencie) */
+  /* Abas: cada função (Dashboard, Adicionar, Atualizar, Despesas) fica
+     numa view separada, alternada pelo menu lateral via mostrarView(). */
   .view{ display: none; }
   .view.view-active { display: block; }
 
