@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Expense Manager</title>
+<title>Synch Cash</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -12,10 +12,10 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-icon">
-        <svg viewBox="0 0 24 24" fill="none" width="15" height="15"><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="3" width="18" height="18" rx="4" stroke="currentColor" stroke-width="1.6"/></svg>
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="Synch Cash">
       </div>
       <div class="brand-text">
-        <div class="name">Expense Manager</div>
+        <div class="name">Synch Cash</div>
         <div class="sub">Controle de despesas</div>
       </div>
     </div>
@@ -26,18 +26,22 @@
         <div class="nav-item active" onclick="mostrarView('dashboard', this)">
             <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="9" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="5" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="12" width="7" height="9" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="16" width="7" height="5" rx="1.5" stroke="currentColor" stroke-width="1.6"/></svg>
             Dashboard
+            <span class="nav-num">01</span>
         </div>
         <div class="nav-item" onclick="mostrarView('adicionar', this)">
             <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             Adicionar Despesa
+            <span class="nav-num">02</span>
         </div>
         <div class="nav-item" onclick="mostrarView('atualizar', this)">
             <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l1-4 11-11a2 2 0 013 3L8 19l-4 1z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Atualizar Despesa
+            <span class="nav-num">03</span>
         </div>
         <div class="nav-item" onclick="mostrarView('despesas', this)">
             <svg viewBox="0 0 24 24" fill="none"><path d="M7 3h8l4 4v14a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6"/><path d="M9 12h6M9 16h6M9 8h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             Despesas
+            <span class="nav-num">04</span>
         </div>
       </div>
     </div>
@@ -53,6 +57,7 @@
     </div>
 
     <div class="content">
+      <div class="eyebrow">Painel</div>
       <h1>Gerenciador de Despesas</h1>
       <div class="subtitle">Acompanhe e gerencie seus gastos</div>
 
@@ -83,7 +88,7 @@
 
         <div class="two-col">
           <div class="panel">
-            <div class="panel-title">Resumo por Mês</div>
+            <div class="panel-head"><span class="panel-tag">01</span><div class="panel-title">Resumo por Mês</div></div>
             <div class="panel-sub">Total gasto em cada mês</div>
             {% if resumo_mensal %}
               {% set max_total = namespace(value=0) %}
@@ -107,13 +112,14 @@
           </div>
 
           <div class="panel">
-            <div class="panel-title">Despesas por Nome</div>
+            <div class="panel-head"><span class="panel-tag">02</span><div class="panel-title">Despesas por Nome</div></div>
             <div class="panel-sub">Top 5 — participação no total</div>
 
             {% if top_despesas %}
-              {# Paleta trocada pro tema azul: tons de azul/ciano/roxo em
-                 vez da paleta anterior (verde/laranja/vermelho/roxo) #}
-              {% set cores = ['#3d8bff', '#22b8cf', '#7c5cff', '#5b8def', '#2fd9c4'] %}
+              {# Paleta preto e branco: rampa de cinza do branco ao
+                 quase-preto, pra manter as fatias distinguiveis sem
+                 usar matiz nenhum. #}
+              {% set cores = ['#ffffff', '#b8b8be', '#84848c', '#54545c', '#2c2c32'] %}
 
               {% set total_top = namespace(value=0) %}
               {% for nome, total in top_despesas %}
@@ -150,7 +156,7 @@
         </div>
 
         <div class="panel">
-          <div class="panel-title">Ranking de Gastos</div>
+          <div class="panel-head"><span class="panel-tag">03</span><div class="panel-title">Ranking de Gastos</div></div>
           <div class="panel-sub">Do maior pro menor</div>
 
           {% if top_despesas %}
@@ -178,6 +184,7 @@
       <div id="view-adicionar" class="view">
         <div class="panel">
           <div class="panel-head">
+            <span class="panel-tag">04</span>
             <div class="panel-title">Adicionar Despesa</div>
           </div>
           <div class="panel-sub">Registre um novo gasto</div>
@@ -204,7 +211,7 @@
                 </div>
               </div>
             </div>
-            <button type="submit" class="btn-primary">+ Adicionar</button>
+            <button type="submit" class="btn-primary">Adicionar</button>
           </form>
         </div>
       </div>
@@ -212,6 +219,7 @@
       <div id="view-atualizar" class="view">
         <div class="panel">
           <div class="panel-head">
+            <span class="panel-tag">05</span>
             <div class="panel-title">Atualizar Despesa</div>
           </div>
           <div class="panel-sub">Edite um lançamento pelo ID</div>
@@ -256,6 +264,7 @@
       <div id="view-despesas" class="view">
         <div class="panel">
           <div class="panel-head">
+            <span class="panel-tag">06</span>
             <div class="panel-title">Despesas</div>
           </div>
           <div class="panel-sub">Todos os lançamentos</div>
@@ -291,6 +300,10 @@
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div class="watermark-wrap">
+        <div class="brand-watermark">SYNCH CASH</div>
       </div>
 
     </div>
