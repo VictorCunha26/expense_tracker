@@ -195,7 +195,13 @@
             <div class="form-grid" style="margin-top:14px;">
               <div class="field">
                 <label for="valor">Valor (R$)</label>
-                <input type="number" id="valor" name="valor" step="0.01" min="0.01" required>
+                <div class="num-wrap">
+                  <input type="number" id="valor" name="valor" step="0.01" min="0.01" required>
+                  <div class="num-arrows">
+                    <button type="button" class="num-arrow up" tabindex="-1" aria-label="Aumentar"></button>
+                    <button type="button" class="num-arrow down" tabindex="-1" aria-label="Diminuir"></button>
+                  </div>
+                </div>
               </div>
             </div>
             <button type="submit" class="btn-primary">+ Adicionar</button>
@@ -213,7 +219,13 @@
             <div class="form-grid">
               <div class="field">
                 <label for="id_despesa">ID da despesa</label>
-                <input type="number" id="id_despesa" name="id_despesa" required>
+                <div class="num-wrap">
+                  <input type="number" id="id_despesa" name="id_despesa" required>
+                  <div class="num-arrows">
+                    <button type="button" class="num-arrow up" tabindex="-1" aria-label="Aumentar"></button>
+                    <button type="button" class="num-arrow down" tabindex="-1" aria-label="Diminuir"></button>
+                  </div>
+                </div>
               </div>
               <div class="field">
                 <label for="nome_despesa_upd">Nome</label>
@@ -227,7 +239,13 @@
               </div>
               <div class="field">
                 <label for="valor_upd">Valor (R$)</label>
-                <input type="number" id="valor_upd" name="valor" step="0.01" min="0.01" required>
+                <div class="num-wrap">
+                  <input type="number" id="valor_upd" name="valor" step="0.01" min="0.01" required>
+                  <div class="num-arrows">
+                    <button type="button" class="num-arrow up" tabindex="-1" aria-label="Aumentar"></button>
+                    <button type="button" class="num-arrow down" tabindex="-1" aria-label="Diminuir"></button>
+                  </div>
+                </div>
               </div>
             </div>
             <button type="submit" class="btn-outline">Atualizar</button>
@@ -244,10 +262,10 @@
           <table>
             <thead>
               <tr>
-                <th>ID</th>
+                <th class="th-sort" data-col="0" data-type="num">ID<span class="sort-arrows"><span class="sort-arrow up"></span><span class="sort-arrow down"></span></span></th>
                 <th>Nome</th>
                 <th>Descrição</th>
-                <th>Valor</th>
+                <th class="th-sort" data-col="3" data-type="valor">Valor<span class="sort-arrows"><span class="sort-arrow up"></span><span class="sort-arrow down"></span></span></th>
                 <th>Data</th>
                 <th></th>
               </tr>
@@ -259,7 +277,7 @@
                 <td>{{ resultado[1] }}</td>
                 <td>{{ resultado[2] }}</td>
                 <td class="valor-cell">R$ {{ "%.2f"|format(resultado[3]) }}</td>
-                <td>{{ resultado[4] }}</td>
+                <td>{{ resultado[4]|data_br }}</td>
                 <td>
                   <form action="{{ url_for('deletar_despesa') }}" method="POST" style="display:inline;" onsubmit="return confirm('Você realmente quer deletar essa despesa?');">
                     <input type="hidden" name="id_despesa" value="{{ resultado[0] }}">

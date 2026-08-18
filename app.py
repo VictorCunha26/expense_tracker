@@ -9,6 +9,18 @@ app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
 
 
+@app.template_filter("data_br")
+def data_br(valor):
+    """Mostra so dia/mes/ano, sem hora."""
+    if not valor:
+        return ""
+    try:
+        ano, mes, dia = str(valor)[:10].split("-")
+        return f"{dia}/{mes}/{ano}"
+    except Exception:
+        return valor
+
+
 def obter_supabase():
     """retorna um cliente autenticado, renovando um token se estiver expirado."""
     supabase = conectar_como_usuario(session["access_token"])
