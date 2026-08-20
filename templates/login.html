@@ -5,48 +5,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Entrar — Synch Cash</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 </head>
 <body class="auth-body">
-  <div class="auth-wrap">
-    <div class="auth-card">
-      <div class="brand" style="justify-content:center;margin-bottom:22px;">
-        <div class="brand-icon">
-          <img src="{{ url_for('static', filename='logo.png') }}" alt="Synch Cash">
-        </div>
-        <div class="brand-text">
-          <div class="name">Synch Cash</div>
-          <div class="sub">Controle de despesas</div>
+
+  <div class="auth-visual">
+    <div class="auth-watermark-wrap">
+      <div class="text3d-stage" id="text3dStage">
+        <div class="auth-watermark-fallback">
+          <div class="auth-watermark-line">SYNCH CASH</div>
         </div>
       </div>
+      <div class="auth-watermark-sub">Controle sua despesa</div>
+    </div>
+  </div>
 
-      <div class="eyebrow" style="justify-content:center;">Acesso</div>
-      <h1 class="auth-title">Entrar</h1>
-      <div class="subtitle" style="text-align:center;margin-bottom:22px;">Acesse suas despesas</div>
+  <div class="auth-form-pane">
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <h1 class="auth-title">Entrar</h1>
+        <div class="subtitle" style="text-align:center;margin-bottom:22px;">Acesse suas despesas</div>
 
-      {% with mensagens = get_flashed_messages() %}
-        {% if mensagens %}
-          <div class="auth-flash">
-            {% for m in mensagens %}<div>{{ m }}</div>{% endfor %}
+        {% with mensagens = get_flashed_messages() %}
+          {% if mensagens %}
+            <div class="auth-flash">
+              {% for m in mensagens %}<div>{{ m }}</div>{% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <form action="{{ url_for('login') }}" method="POST">
+          <div class="field" style="margin-bottom:14px;">
+            <label for="email">E-mail</label>
+            <input type="email" id="email" name="email" required>
           </div>
-        {% endif %}
-      {% endwith %}
+          <div class="field">
+            <label for="senha">Senha</label>
+            <input type="password" id="senha" name="senha" required>
+          </div>
+          <button type="submit" class="btn-primary" style="width:100%;justify-content:center;margin-top:20px;">Entrar</button>
+        </form>
 
-      <form action="{{ url_for('login') }}" method="POST">
-        <div class="field" style="margin-bottom:14px;">
-          <label for="email">E-mail</label>
-          <input type="email" id="email" name="email" required>
+        <div class="auth-footer">
+          Ainda não tem conta? <a href="{{ url_for('cadastro') }}">Cadastre-se</a>
         </div>
-        <div class="field">
-          <label for="senha">Senha</label>
-          <input type="password" id="senha" name="senha" required>
-        </div>
-        <button type="submit" class="btn-primary" style="width:100%;justify-content:center;margin-top:20px;">Entrar</button>
-      </form>
-
-      <div class="auth-footer">
-        Ainda não tem conta? <a href="{{ url_for('cadastro') }}">Cadastre-se</a>
       </div>
     </div>
   </div>
+
+  <script type="module" src="{{ url_for('static', filename='text3d.js') }}"></script>
 </body>
 </html>

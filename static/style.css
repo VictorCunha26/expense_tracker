@@ -82,14 +82,6 @@
   .nav-item svg{width:15px;height:15px;flex-shrink:0;}
   .nav-item.active{background:var(--blue-dark);color:var(--blue);}
   .nav-item.active:hover{background:var(--blue-dark);color:var(--blue);}
-  .nav-num{
-    margin-left:auto;
-    font-family:'JetBrains Mono', monospace;
-    font-size:10px;
-    color:var(--muted-2);
-    letter-spacing:.02em;
-  }
-  .nav-item.active .nav-num{color:var(--blue);}
 
   /* Main */
   .main{flex:1;display:flex;flex-direction:column;min-width:0;}
@@ -106,18 +98,6 @@
   }
 
   .content{padding:28px 32px 60px;overflow-y:auto;}
-
-  /* Rotulo pequeno com marcador quadrado -- "eyebrow" tecnico, no
-     estilo dos labels (OPERATIONS / EQUITY / TRANSPARENCY) da
-     referencia -- antecede o titulo principal da pagina. */
-  .eyebrow{
-    display:flex;align-items:center;gap:8px;
-    font-family:'JetBrains Mono', monospace;
-    font-size:10.5px;color:var(--muted-2);
-    text-transform:uppercase;letter-spacing:.14em;
-    margin-bottom:10px;
-  }
-  .eyebrow::before{content:"";width:6px;height:6px;background:var(--blue);flex-shrink:0;}
 
   h1{font-size:30px;font-weight:700;margin-bottom:4px;letter-spacing:-.02em;line-height:1.05;}
   .subtitle{color:var(--muted);font-size:13.5px;margin-bottom:22px;}
@@ -169,16 +149,6 @@
   .panel-head{display:flex;align-items:center;gap:10px;margin-bottom:2px;}
   .panel-title{font-size:15.5px;font-weight:600;letter-spacing:-.005em;}
   .panel-sub{color:var(--muted);font-size:11.5px;margin-bottom:20px;letter-spacing:.02em;}
-
-  /* Tag numerada quadrada, tipo "▪ 01", antes do titulo do painel --
-     eco do padrao de numeracao usado nos blocos e no FAQ da referencia. */
-  .panel-tag{
-    display:inline-flex;align-items:center;justify-content:center;
-    min-width:24px;height:18px;padding:0 5px;
-    background:#0a0e17;border:1px solid var(--panel-border);
-    font-family:'JetBrains Mono', monospace;font-size:10px;color:var(--muted);
-    flex-shrink:0;
-  }
 
   .two-col{display:grid;grid-template-columns:1.3fr 1fr;gap:20px;align-items:start;}
 
@@ -361,14 +331,112 @@
   .legend-item { display: flex; align-items: center; gap: 6px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
-  /* Paginas de login/cadastro -- layout centralizado, sem sidebar */
+  /* Paginas de login/cadastro -- formulario na direita, painel de
+     marca (grade + "Synch Cash" materializando/desmaterializando)
+     na esquerda, mesmo estilo do dashboard (P&B, grade fina). */
   .auth-body{
+    display:flex;
+    min-height:100vh;
+    overflow:hidden;
+  }
+
+  .auth-visual{
+    flex:1.2;
+    position:relative;
     display:flex;
     align-items:center;
     justify-content:center;
-    min-height:100vh;
+    border-right:1px solid var(--panel-border);
+    overflow:hidden;
   }
-  .auth-wrap{ width:100%; max-width:380px; padding:20px; }
+  .auth-visual::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,.05) 1px, transparent 1px);
+    background-size:64px 64px;
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, #000 0%, transparent 72%);
+            mask-image:radial-gradient(circle at 50% 50%, #000 0%, transparent 72%);
+    pointer-events:none;
+  }
+
+  /* "SYNCH" / "CASH" em 3D de verdade (WebGL, texto extrudado via
+     Three.js -- static/text3d.js), maiuscula, grande, ocupando o
+     palco quase inteiro. .auth-watermark-fallback e o texto plano
+     que fica visivel so se o WebGL/CDN falhar -- mesmo efeito de
+     materializar em CSS puro, como rede de seguranca. */
+  .auth-watermark-wrap{
+    position:relative;
+    text-align:center;
+    padding:0 20px;
+    width:100%;
+  }
+  .text3d-stage{
+    position:relative;
+    width:min(88%, 760px);
+    aspect-ratio:5.6 / 1;
+    max-height:148px;
+    margin:0 auto;
+  }
+  .text3d-stage canvas{ position:absolute; inset:0; display:block; width:100% !important; height:100% !important; }
+
+  .auth-watermark-fallback{
+    position:absolute;
+    inset:0;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    perspective:1000px;
+  }
+  .auth-watermark-line{
+    font-size:clamp(38px, 8.5vw, 116px);
+    font-weight:700;
+    line-height:1.02;
+    letter-spacing:-.02em;
+    text-transform:uppercase;
+    white-space:nowrap;
+    background-image:linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.25));
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+    text-shadow:0 1px 0 rgba(255,255,255,.12), 0 2px 0 rgba(255,255,255,.08), 0 14px 26px rgba(0,0,0,.55);
+    user-select:none;
+    transform-style:preserve-3d;
+    animation:auth-materialize-3d 6s ease-in-out infinite;
+  }
+  .auth-watermark-sub{
+    margin-top:2px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:17px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted-2);
+    animation:auth-materialize-3d 6s ease-in-out infinite;
+    animation-delay:.3s;
+  }
+  @keyframes auth-materialize-3d{
+    0%   { opacity:0; filter:blur(14px); transform:rotateX(42deg) translateZ(-90px) scale(.92); }
+    30%  { opacity:1; filter:blur(0); transform:rotateX(0deg) translateZ(0) scale(1); }
+    70%  { opacity:1; filter:blur(0); transform:rotateX(0deg) translateZ(0) scale(1); }
+    100% { opacity:0; filter:blur(14px); transform:rotateX(-42deg) translateZ(-90px) scale(.92); }
+  }
+  /* Sem pausa por "prefers-reduced-motion" de proposito aqui: e um
+     flourish decorativo pedido explicitamente pra ficar sempre em
+     loop, nao conteudo funcional -- se o SO/navegador tiver "reduzir
+     animacoes" ligado ele nao devia zerar essa animacao especifica. */
+
+  .auth-form-pane{
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:32px;
+  }
+
+  .auth-wrap{ width:100%; max-width:380px; }
   .auth-card{
     background:var(--panel);
     border:1px solid var(--panel-border);
@@ -440,4 +508,6 @@
     .two-col{grid-template-columns:1fr;}
     .form-grid{grid-template-columns:1fr;}
     .sidebar{display:none;}
+    .auth-visual{display:none;}
+    .auth-body{overflow-y:auto;}
   }
