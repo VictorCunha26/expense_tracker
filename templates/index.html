@@ -41,65 +41,124 @@
         </div>
       </div>
     </div>
+
+    <div class="sidebar-spacer"></div>
+
+    <div class="sidebar-foot">
+      <div class="nav-label">Conta</div>
+      <div class="user-chip">
+        <div class="avatar">{{ (email or "?")[0]|upper }}</div>
+        <div class="user-chip-email" title="{{ email }}">{{ email }}</div>
+      </div>
+      <a href="{{ url_for('logout') }}" class="nav-item nav-logout">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l5-5-5-5M21 12H9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Sair
+      </a>
+    </div>
   </aside>
 
   <div class="main">
-    <div class="topbar">
-      <div></div>
-      <div class="user-info">
-        <span>{{ email }}</span>
-        <a href="{{ url_for('logout') }}" class="logout-link">Sair</a>
-      </div>
-    </div>
-
     <div class="content">
-      <h1>Gerenciador de Despesas</h1>
-      <div class="subtitle">Acompanhe e gerencie seus gastos</div>
 
       <div id="view-dashboard" class="view view-active">
+
+        <div class="overview-head">
+          <h1>Visão Geral</h1>
+          <div class="pill">{{ resumo[0] or 0 }} registros</div>
+        </div>
+
+        {% set cards = [
+          {
+            "titulo": "Total de Despesas",
+            "sub": "Quantidade de lançamentos",
+            "valor": resumo[0] or 0,
+            "accent": "green",
+            "dados": overview.qtd
+          },
+          {
+            "titulo": "Total Gasto",
+            "sub": "Soma de todos os gastos",
+            "valor": "R$ " ~ ("%.2f"|format(resumo[1] or 0)),
+            "accent": "orange",
+            "dados": overview.valor
+          },
+          {
+            "titulo": "Média por Despesa",
+            "sub": "Valor médio por lançamento",
+            "valor": "R$ " ~ ("%.2f"|format((resumo[1] / resumo[0]) if resumo[0] else 0)),
+            "accent": "purple",
+            "dados": overview.media
+          }
+        ] %}
+
         <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-top">Total de Despesas
-              <svg viewBox="0 0 24 24" fill="none"><path d="M7 3h8l4 4v14a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6"/></svg>
+          {% for card in cards %}
+          <div class="stat-card accent-{{ card.accent }}">
+            <div class="stat-info">
+              <div class="stat-top">{{ card.titulo }}</div>
+              <div class="stat-sub">{{ card.sub }}</div>
+              <div class="stat-value">{{ card.valor }}</div>
+              <div class="stat-trend {{ card.dados.tendencia.classe }}">
+                {% if card.dados.tendencia.pct is not none %}
+                  <span class="trend-badge">{{ card.dados.tendencia.seta }} {{ "%.2f"|format(card.dados.tendencia.pct) }}%</span>
+                  <span class="trend-label">vs. mês anterior</span>
+                {% else %}
+                  <span class="trend-label">Sem histórico suficiente</span>
+                {% endif %}
+              </div>
             </div>
-            <div class="stat-value">{{ resumo[0] or 0 }}</div>
-            <div class="stat-foot">Registros no total</div>
+            {% if card.dados.spark %}
+            <svg class="stat-spark" viewBox="0 0 132 52" preserveAspectRatio="none">
+              <polyline points="{{ card.dados.spark }}"></polyline>
+            </svg>
+            {% endif %}
           </div>
-          <div class="stat-card">
-            <div class="stat-top">Total Gasto
-              <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v10M9 9.5c0-1.1 1.3-2 3-2s3 .7 3 1.7c0 2.3-6 1-6 3.3 0 1 1.3 1.7 3 1.7s3-.9 3-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-            </div>
-            <div class="stat-value">R$ {{ "%.2f"|format(resumo[1] or 0) }}</div>
-            <div class="stat-foot">Soma de todas as despesas</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-top">Média por Despesa
-              <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v5l3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-            </div>
-            <div class="stat-value">R$ {{ "%.2f"|format((resumo[1] / resumo[0]) if resumo[0] else 0) }}</div>
-            <div class="stat-foot">Valor médio por lançamento</div>
-          </div>
+          {% endfor %}
         </div>
 
         <div class="two-col">
-          <div class="panel">
-            <div class="panel-title">Resumo por Mês</div>
-            <div class="panel-sub">Total gasto em cada mês</div>
-            {% if resumo_mensal %}
-              {% set max_total = namespace(value=0) %}
-              {% for mes, total in resumo_mensal %}
-                {% if total and total > max_total.value %}{% set max_total.value = total %}{% endif %}
-              {% endfor %}
-              <div class="hbars">
-                {% for mes, total in resumo_mensal %}
-                <div class="hbar-row">
-                  <div class="hbar-label">{{ mes }}</div>
-                  <div class="hbar-track">
-                    <div class="hbar-fill" style="width:{{ (total / max_total.value * 100) if max_total.value else 0 }}%"></div>
-                  </div>
-                  <div class="hbar-value">R$ {{ "%.2f"|format(total) }}</div>
+          <div class="panel chart-panel">
+            <div class="panel-head-row">
+              <div>
+                <div class="panel-title">Resumo por Despesa</div>
+                <div class="panel-sub">
+                  Despesas de {{ mes_atual_nome }}, na ordem em que foram adicionadas — reinicia todo mês
                 </div>
-                {% endfor %}
+              </div>
+              <button type="button" class="panel-action" title="Adicionar despesa" aria-label="Adicionar despesa"
+                onclick="mostrarView('adicionar', document.querySelector('.nav-item[onclick*=adicionar]'))">+</button>
+            </div>
+
+            {% if grafico_despesas %}
+              <div class="chart-wrap" data-pontos='{{ grafico_despesas.pontos | tojson }}'>
+                <svg class="area-chart" viewBox="0 0 {{ grafico_despesas.largura }} {{ grafico_despesas.altura }}" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="var(--green)" stop-opacity="0.32"/>
+                      <stop offset="100%" stop-color="var(--green)" stop-opacity="0"/>
+                    </linearGradient>
+                  </defs>
+                  <line x1="0" y1="{{ grafico_despesas.altura / 2 }}" x2="{{ grafico_despesas.largura }}" y2="{{ grafico_despesas.altura / 2 }}" class="chart-gridline"></line>
+                  <path d="{{ grafico_despesas.area }}" class="area-fill"></path>
+                  <polyline points="{{ grafico_despesas.linha }}" class="area-line"></polyline>
+                  {% for p in grafico_despesas.pontos %}
+                  <circle class="chart-dot" cx="{{ p.x }}" cy="{{ p.y }}" r="4"></circle>
+                  {% endfor %}
+                </svg>
+                <div class="chart-crosshair"></div>
+                <div class="chart-tooltip"></div>
+              </div>
+              <div class="chart-foot">
+                <div>
+                  <div class="chart-foot-label">Média</div>
+                  <div class="chart-foot-value">R$ {{ "%.2f"|format(grafico_despesas.media) }}</div>
+                </div>
+                {% if periodo_despesas %}
+                <div class="chart-foot-right">
+                  <div class="chart-foot-label">Período</div>
+                  <div class="chart-foot-value">{{ periodo_despesas[0]|data_br }} - {{ periodo_despesas[1]|data_br }}</div>
+                </div>
+                {% endif %}
               </div>
             {% else %}
               <div class="empty-hint">Sem dados suficientes ainda</div>
@@ -108,39 +167,36 @@
 
           <div class="panel">
             <div class="panel-title">Despesas por Nome</div>
-            <div class="panel-sub">Top 5 — participação no total</div>
+            <div class="panel-sub">Top 5 — passe o cursor pra ver cada despesa</div>
 
-            {% if top_despesas %}
-              {# Paleta preto e branco: rampa de cinza do branco ao
-                 quase-preto, pra manter as fatias distinguiveis sem
-                 usar matiz nenhum. #}
-              {% set cores = ['#ffffff', '#b8b8be', '#84848c', '#54545c', '#2c2c32'] %}
-
-              {% set total_top = namespace(value=0) %}
-              {% for nome, total in top_despesas %}
-                {% set total_top.value = total_top.value + total %}
-              {% endfor %}
-
-              {% set acumulado = namespace(value=0) %}
-              {% set fatias = namespace(partes=[]) %}
-              {% for nome, total in top_despesas %}
-                {% set pct_inicio = (acumulado.value / total_top.value * 100) if total_top.value else 0 %}
-                {% set acumulado.value = acumulado.value + total %}
-                {% set pct_fim = (acumulado.value / total_top.value * 100) if total_top.value else 0 %}
-                {% set fatias.partes = fatias.partes + [
-                     cores[loop.index0 % cores|length] ~ ' ' ~ pct_inicio ~ '% ' ~ pct_fim ~ '%'
-                   ] %}
-              {% endfor %}
-
+            {% if donut %}
+              {% set centro = donut.raio + 11 %}
               <div class="donut-wrap">
-                <div class="donut" style="background: conic-gradient({{ fatias.partes|join(', ') }});"></div>
+                <svg class="donut-svg" viewBox="0 0 {{ centro * 2 }} {{ centro * 2 }}">
+                  <circle cx="{{ centro }}" cy="{{ centro }}" r="{{ donut.raio }}" class="donut-track"></circle>
+                  <g transform="rotate(-90 {{ centro }} {{ centro }})">
+                    {% for seg in donut.segmentos %}
+                    <circle
+                      cx="{{ centro }}" cy="{{ centro }}" r="{{ donut.raio }}"
+                      class="donut-segment"
+                      stroke="{{ seg.cor }}"
+                      stroke-dasharray="{{ seg.dasharray }}"
+                      stroke-dashoffset="{{ seg.dashoffset }}"
+                      data-nome="{{ seg.nome }}"
+                      data-valor="{{ '%.2f'|format(seg.valor) }}"
+                      data-pct="{{ '%.1f'|format(seg.pct) }}"
+                    ></circle>
+                    {% endfor %}
+                  </g>
+                </svg>
+                <div class="donut-tooltip"></div>
               </div>
 
               <div class="legend">
-                {% for nome, total in top_despesas %}
+                {% for seg in donut.segmentos %}
                 <div class="legend-item">
-                  <span class="dot" style="background:{{ cores[loop.index0 % cores|length] }}"></span>
-                  {{ nome }} — R$ {{ "%.2f"|format(total) }}
+                  <span class="dot" style="background:{{ seg.cor }}"></span>
+                  {{ seg.nome }} — R$ {{ "%.2f"|format(seg.valor) }}
                 </div>
                 {% endfor %}
               </div>
@@ -148,31 +204,6 @@
               <div class="empty-hint">Sem dados suficientes ainda</div>
             {% endif %}
           </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-title">Ranking de Gastos</div>
-          <div class="panel-sub">Do maior pro menor</div>
-
-          {% if top_despesas %}
-            {% set max_top = namespace(value=0) %}
-            {% for nome, total in top_despesas %}
-              {% if total and total > max_top.value %}{% set max_top.value = total %}{% endif %}
-            {% endfor %}
-            <div class="hbars">
-              {% for nome, total in top_despesas %}
-              <div class="hbar-row">
-                <div class="hbar-label">{{ nome }}</div>
-                <div class="hbar-track">
-                  <div class="hbar-fill" style="width:{{ (total / max_top.value * 100) if max_top.value else 0 }}%"></div>
-                </div>
-                <div class="hbar-value">R$ {{ "%.2f"|format(total) }}</div>
-              </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <div class="empty-hint">Sem dados suficientes ainda</div>
-          {% endif %}
         </div>
       </div>
 
