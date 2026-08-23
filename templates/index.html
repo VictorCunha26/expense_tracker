@@ -9,7 +9,22 @@
 <body>
 <div class="app">
 
-  <aside class="sidebar">
+  <div class="mobile-topbar">
+    <button type="button" class="hamburger" id="hamburger-btn" aria-label="Abrir menu" aria-expanded="false" aria-controls="sidebar">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="mobile-brand">
+      <div class="brand-icon">
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="Synch Cash">
+      </div>
+      <div class="name">Synch Cash</div>
+    </div>
+    <div class="mobile-avatar">{{ (email or "?")[0]|upper }}</div>
+  </div>
+
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <aside class="sidebar" id="sidebar">
     <div class="brand">
       <div class="brand-icon">
         <img src="{{ url_for('static', filename='logo.png') }}" alt="Synch Cash">
@@ -291,6 +306,7 @@
             <div class="panel-title">Despesas</div>
           </div>
           <div class="panel-sub">Todos os lançamentos</div>
+          <div class="table-scroll">
           <table>
             <thead>
               <tr>
@@ -322,6 +338,7 @@
               {% endfor %}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
 

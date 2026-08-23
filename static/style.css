@@ -593,13 +593,94 @@
     user-select:none;
   }
 
+  /* Topbar mobile (hamburguer + marca + avatar) -- so aparece abaixo do
+     breakpoint; em telas largas a navegacao continua 100% pela sidebar. */
+  .mobile-topbar{
+    display:none;
+    align-items:center;
+    gap:12px;
+    position:sticky;
+    top:0;
+    z-index:20;
+    padding:12px 14px;
+    background:var(--bg);
+    border-bottom:1px solid var(--panel-border);
+  }
+  .hamburger{
+    flex-shrink:0;
+    width:34px;height:34px;
+    border-radius:9px;
+    border:1px solid var(--panel-border);
+    background:var(--panel-soft);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:4px;
+    cursor:pointer;
+  }
+  .hamburger span{width:15px;height:1.6px;background:var(--text);display:block;border-radius:2px;transition:transform .18s,opacity .18s;}
+  .hamburger[aria-expanded="true"] span:nth-child(1){transform:translateY(5.6px) rotate(45deg);}
+  .hamburger[aria-expanded="true"] span:nth-child(2){opacity:0;}
+  .hamburger[aria-expanded="true"] span:nth-child(3){transform:translateY(-5.6px) rotate(-45deg);}
+  .mobile-brand{display:flex;align-items:center;gap:9px;flex:1;min-width:0;}
+  .mobile-brand .brand-icon{width:26px;height:26px;border-radius:7px;}
+  .mobile-brand .name{font-weight:700;font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mobile-avatar{
+    flex-shrink:0;
+    width:26px;height:26px;border-radius:50%;
+    background:var(--accent-soft);color:var(--accent);
+    display:flex;align-items:center;justify-content:center;
+    font-size:11.5px;font-weight:700;
+  }
+
+  /* Backdrop escurece o conteudo por tras da gaveta; so existe/e clicavel
+     quando a sidebar esta aberta no mobile. */
+  .sidebar-backdrop{
+    display:none;
+    position:fixed;inset:0;
+    background:rgba(0,0,0,.6);
+    z-index:29;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .2s;
+  }
+
+  /* Tabela: em telas estreitas ela rola na horizontal em vez de espremer
+     colunas ou estourar o layout. */
+  .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+
   @media(max-width:900px){
     body{padding:0;}
-    .app{border-radius:0;min-height:100vh;}
+    .app{border-radius:0;min-height:100vh;flex-direction:column;}
     .stats-grid{grid-template-columns:1fr 1fr;}
     .two-col{grid-template-columns:1fr;}
     .form-grid{grid-template-columns:1fr;}
-    .sidebar{display:none;}
     .auth-visual{display:none;}
     .auth-body{overflow-y:auto;}
+
+    .mobile-topbar{display:flex;}
+
+    /* Sidebar vira uma gaveta deslizante por cima do conteudo -- mesma
+       navegacao (Dashboard/Adicionar/Atualizar/Despesas, conta, Sair),
+       so que escondida fora da tela ate o hamburguer abrir. */
+    .sidebar{
+      position:fixed;
+      top:0;left:0;bottom:0;
+      z-index:30;
+      width:min(78vw, 280px);
+      background:var(--bg);
+      transform:translateX(-100%);
+      transition:transform .22s ease;
+      box-shadow:0 0 40px rgba(0,0,0,.5);
+    }
+    .sidebar.open{transform:translateX(0);}
+    .sidebar-backdrop.open{display:block;opacity:1;pointer-events:auto;}
+
+    .content{padding:18px 16px 44px;}
+    h1{font-size:22px;}
+    .donut-svg{width:150px;height:150px;}
+  }
+
+  @media(max-width:560px){
+    .stats-grid{grid-template-columns:1fr;}
+    .stat-card{gap:10px;}
+    .stat-spark{width:96px;}
   }

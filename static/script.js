@@ -9,6 +9,43 @@ function mostrarView(nome, botaoClicado) {
     });
 
     botaoClicado.classList.add('active');
+
+    fecharSidebar();
+}
+
+// Sidebar mobile: no celular ela vira uma gaveta deslizante aberta pelo
+// hamburguer da topbar; no desktop essas funcoes nao tem efeito (a
+// sidebar ja fica sempre visivel).
+var sidebarEl = document.getElementById('sidebar');
+var hamburgerBtn = document.getElementById('hamburger-btn');
+var backdropEl = document.getElementById('sidebar-backdrop');
+
+function abrirSidebar() {
+    if (!sidebarEl) return;
+    sidebarEl.classList.add('open');
+    backdropEl.classList.add('open');
+    hamburgerBtn.setAttribute('aria-expanded', 'true');
+}
+
+function fecharSidebar() {
+    if (!sidebarEl) return;
+    sidebarEl.classList.remove('open');
+    backdropEl.classList.remove('open');
+    hamburgerBtn.setAttribute('aria-expanded', 'false');
+}
+
+if (hamburgerBtn) {
+    hamburgerBtn.addEventListener('click', function () {
+        if (sidebarEl.classList.contains('open')) {
+            fecharSidebar();
+        } else {
+            abrirSidebar();
+        }
+    });
+    backdropEl.addEventListener('click', fecharSidebar);
+    document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') fecharSidebar();
+    });
 }
 
 document.querySelectorAll('.num-arrow').forEach(function (botao) {
