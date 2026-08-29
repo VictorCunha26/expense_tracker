@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+{% from "_tabela.html" import tabela with context %}
+
+{% block conteudo %}
+<div class="view-stack">
+  <section class="surface transactions-panel">
+    <div class="panel-title-row">
+      <div>
+        <h2>Todas as transações</h2>
+        <p>{{ linhas|length }} movimentaç{{ 'ões' if linhas|length != 1 else 'ão' }} encontrada{{ 's' if linhas|length != 1 }}</p>
+      </div>
+      <div class="panel-actions">
+        <form method="POST" action="{{ url_for('importar_csv') }}" enctype="multipart/form-data" id="form-importar">
+          <input type="hidden" name="origem" value="{{ request.full_path }}">
+          <input type="file" name="arquivo" id="arquivo-csv" accept=".csv,text/csv" hidden
+                 onchange="document.getElementById('form-importar').submit()">
+          <button type="button" class="btn" onclick="document.getElementById('arquivo-csv').click()">{{ ic.enviar_arquivo() }} Importar</button>
+        </form>
+        <a class="btn" href="{{ url_for('exportar_csv') }}">{{ ic.baixar() }} Exportar</a>
+      </div>
+    </div>
+
+    {# Filtros: GET simples, então a URL guarda o estado e dá pra compartilhar. #}
+    <form class="filters-row" method="GET">
+      <div class="search-field">
+        {{ ic.busca() }}
+        <input class="input" type="search" name="q" value="{{ filtros.q }}"
+               placeholder="Buscar transação, categoria ou conta..." aria-label="Buscar">
+      </div>
+      <select class="input" name="tipo" onchange="this.form.submit()" aria-label="Tipo">
+        <option value="todos" {{ 'selected' if filtros.tipo == 'todos' }}>Todos os tipos</option>
+        <option value="despesa" {{ 'selected' if filtros.tipo == 'despesa' }}>Despesas</option>
+        <option value="receita" {{ 'selected' if filtros.tipo == 'receita' }}>Receitas</option>
+      </select>
+      <select class="input" name="status" onchange="this.form.submit()" aria-label="Status">
+        <option value="todos" {{ 'selected' if filtros.status == 'todos' }}>Todos os status</option>
+        <option value="pago" {{ 'selected' if filtros.status == 'pago' }}>Pagos</option>
+        <option value="pendente" {{ 'selected' if filtros.status == 'pendente' }}>Pendentes</option>
+      </select>
+      <select class="input" name="categoria" onchange="this.form.submit()" aria-label="Categoria">
+        <option value="todas" {{ 'selected' if filtros.categoria == 'todas' }}>Todas as categorias</option>
+        {% for c in categorias %}
+          <option value="{{ c }}" {{ 'selected' if filtros.categoria == c }}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </form>
+
+    {% if linhas %}
+      {{ tabela(linhas) }}
+    {% else %}
+      <div class="empty-state">
+        {{ ic.busca() }}
+        <h3>Nenhuma transação encontrada</h3>
+        <p>Altere a busca ou os filtros selecionados.</p>
+      </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

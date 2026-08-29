@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+
+{% block conteudo %}
+<div class="view-stack">
+  <section class="goals-grid">
+    {% for m in metas %}
+    <article class="surface goal-card">
+      <div class="goal-card-top">
+        <div class="goal-icon" style="color:{{ m.cor }};background:{{ m.cor }}14">{{ ic.bandeira() }}</div>
+        <details class="menu">
+          <summary class="btn btn-ghost btn-icon" aria-label="Ações de {{ m.nome }}">{{ ic.tres_pontos() }}</summary>
+          <div class="dark-menu">
+            <button type="button" data-aportar data-id="{{ m.id }}" data-nome="{{ m.nome }}">{{ ic.cofrinho() }} Registrar aporte</button>
+            <div class="menu-separator"></div>
+            <button type="button" class="destructive" data-excluir
+                    data-acao="{{ url_for('deletar_meta') }}" data-campo="id" data-id="{{ m.id }}"
+                    data-titulo="Excluir esta meta?"
+                    data-texto="“{{ m.nome }}” e o progresso guardado serão removidos.">{{ ic.lixeira() }} Excluir</button>
+          </div>
+        </details>
+      </div>
+      <p>{{ m.prazo or 'Sem prazo' }}</p>
+      <h3>{{ m.nome }}</h3>
+      <strong class="valor">{{ m.guardado|brl }} <small>de {{ m.alvo|brl }}</small></strong>
+      <div class="progress goal-progress"><div style="width:{{ m.pct }}%"></div></div>
+      <div>
+        <span>{{ m.pct|round|int }}% concluído</span>
+        <span class="valor">Faltam {{ m.falta|brl }}</span>
+      </div>
+    </article>
+    {% endfor %}
+
+    <button class="surface add-goal" data-abrir="modal-meta">
+      {{ ic.mais() }}
+      <strong>Criar nova meta</strong>
+      <span>Transforme seus planos em objetivos reais</span>
+    </button>
+  </section>
+</div>
+{% endblock %}
+
+{% block modais %}
+<dialog class="modal narrow" id="modal-meta">
+  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
+  <div class="modal-header">
+    <h2>Nova meta financeira</h2>
+    <p>Defina um objetivo, valor e prazo.</p>
+  </div>
+  <form class="simple-form" method="POST" action="{{ url_for('salvar_meta') }}">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <label class="field">
+      <span>Nome da meta</span>
+      <input class="input" name="nome" required placeholder="Ex.: Reserva de emergência">
+    </label>
+    <div class="form-grid">
+      <label class="field">
+        <span>Valor já guardado</span>
+        <input class="input" name="guardado" inputmode="decimal" placeholder="0,00">
+      </label>
+      <label class="field">
+        <span>Valor objetivo</span>
+        <input class="input" name="alvo" inputmode="decimal" required placeholder="0,00">
+      </label>
+    </div>
+    <div class="form-grid">
+      <label class="field">
+        <span>Prazo</span>
+        <input class="input" name="prazo" placeholder="Ex.: Dezembro 2027">
+      </label>
+      <label class="field">
+        <span>Cor</span>
+        <select class="input" name="cor">
+          <option value="#22c55e">Verde</option>
+          <option value="#3b82f6">Azul</option>
+          <option value="#8b5cf6">Roxo</option>
+          <option value="#f59e0b">Âmbar</option>
+        </select>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn primary-button">Criar meta</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal narrow" id="modal-aporte">
+  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
+  <div class="modal-header">
+    <h2>Registrar aporte</h2>
+    <p>Quanto você guardou para <span id="aporte-nome"></span>?</p>
+  </div>
+  <form class="simple-form" method="POST" action="{{ url_for('aportar_meta') }}">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <input type="hidden" name="id" id="aporte-id">
+    <label class="field">
+      <span>Valor do aporte</span>
+      <input class="input" name="valor" inputmode="decimal" value="100,00" required>
+    </label>
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn primary-button">Adicionar à meta</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

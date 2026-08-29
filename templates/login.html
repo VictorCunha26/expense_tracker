@@ -1,65 +1,40 @@
-<!DOCTYPE html>
-<html lang="pt-br">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Synch Cash</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-  }
-}
-</script>
-</head>
-<body class="auth-body">
+{% extends "_auth.html" %}
+{% import "icones.html" as ic %}
 
-  <div class="auth-visual">
-    <div class="auth-watermark-wrap">
-      <div class="text3d-stage" id="text3dStage">
-        <div class="auth-watermark-fallback">
-          <div class="auth-watermark-line">SYNCH CASH</div>
-        </div>
-      </div>
-      <div class="auth-watermark-sub">Controle sua despesa</div>
+{% block titulo %}Entrar{% endblock %}
+{% block cabecalho %}Bem-vindo de volta{% endblock %}
+{% block chamada %}Acesse sua conta para continuar cuidando do seu dinheiro.{% endblock %}
+
+{% block formulario %}
+<form class="login-form" action="{{ url_for('login') }}" method="POST">
+  <label class="login-field">
+    <span>E-mail</span>
+    <div>
+      {{ ic.email() }}
+      <input class="input" type="email" name="email" autocomplete="email"
+             placeholder="seu@email.com" required autofocus>
     </div>
+  </label>
+
+  <label class="login-field">
+    <span>Senha</span>
+    <div>
+      {{ ic.cadeado() }}
+      <input class="input" type="password" id="senha" name="senha"
+             autocomplete="current-password" placeholder="Digite sua senha" required>
+      <button type="button" data-ver-senha="senha" aria-label="Mostrar senha">
+        {{ ic.olho() }}<span style="display:none">{{ ic.olho_fechado() }}</span>
+      </button>
+    </div>
+  </label>
+
+  <div class="login-options">
+    <label><input type="checkbox" name="lembrar" checked> Lembrar de mim</label>
+    <a href="{{ url_for('cadastro') }}">Criar uma conta</a>
   </div>
 
-  <div class="auth-form-pane">
-    <div class="auth-wrap">
-      <div class="auth-card">
-        <h1 class="auth-title">Entrar</h1>
-        <div class="subtitle" style="text-align:center;margin-bottom:22px;">Acesse suas despesas</div>
+  <button type="submit" class="btn primary-button login-submit">Entrar {{ ic.seta_direita() }}</button>
+</form>
+{% endblock %}
 
-        {% with mensagens = get_flashed_messages() %}
-          {% if mensagens %}
-            <div class="auth-flash">
-              {% for m in mensagens %}<div>{{ m }}</div>{% endfor %}
-            </div>
-          {% endif %}
-        {% endwith %}
-
-        <form action="{{ url_for('login') }}" method="POST">
-          <div class="field" style="margin-bottom:14px;">
-            <label for="email">E-mail</label>
-            <input type="email" id="email" name="email" required>
-          </div>
-          <div class="field">
-            <label for="senha">Senha</label>
-            <input type="password" id="senha" name="senha" required>
-          </div>
-          <button type="submit" class="btn-primary" style="width:100%;justify-content:center;margin-top:20px;">Entrar</button>
-        </form>
-
-        <div class="auth-footer">
-          Ainda não tem conta? <a href="{{ url_for('cadastro') }}">Cadastre-se</a>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script type="module" src="{{ url_for('static', filename='text3d.js') }}"></script>
-</body>
-</html>
+{% block rodape %}Ainda não tem conta? <a href="{{ url_for('cadastro') }}">Cadastre-se</a>{% endblock %}

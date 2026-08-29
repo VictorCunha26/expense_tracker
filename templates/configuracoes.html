@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+
+{% block conteudo %}
+<form class="settings-grid" method="POST" action="{{ url_for('salvar_preferencias') }}">
+  <input type="hidden" name="origem" value="{{ request.full_path }}">
+
+  <section class="surface settings-card">
+    <div class="panel-title-row">
+      <div><h2>Perfil</h2><p>Informações da sua conta</p></div>
+    </div>
+
+    <div class="profile-settings">
+      <span class="large-avatar">{{ (preferencias.nome or email or '?')[0]|upper }}</span>
+      <div>
+        <strong>{{ preferencias.nome or 'Usuário' }}</strong>
+        <p>Conta Synch Cash</p>
+      </div>
+    </div>
+
+    <div class="settings-fields">
+      <label>
+        <span>Nome completo</span>
+        <input class="input" name="nome" value="{{ preferencias.nome or '' }}">
+      </label>
+      <label>
+        <span>E-mail</span>
+        {# O e-mail é a identidade no Supabase Auth: muda por lá, não aqui. #}
+        <input class="input" value="{{ email }}" disabled title="O e-mail de acesso é gerenciado pelo login">
+      </label>
+    </div>
+
+    <button type="submit" class="btn primary-button">Salvar alterações</button>
+  </section>
+
+  <section class="surface settings-card">
+    <div class="panel-title-row">
+      <div><h2>Preferências</h2><p>Personalize sua experiência</p></div>
+    </div>
+
+    <div class="preference-list">
+      <article>
+        <span>{{ ic.sino() }}<div><strong>Notificações</strong><p>Alertas de orçamento e vencimentos</p></div></span>
+        <label class="switch"><input type="checkbox" name="notificacoes" {{ 'checked' if preferencias.notificacoes }} aria-label="Notificações"><span></span></label>
+      </article>
+      <article>
+        <span>{{ ic.lua() }}<div><strong>Tema escuro</strong><p>Identidade principal do Synch Cash</p></div></span>
+        <label class="switch"><input type="checkbox" name="tema_escuro" {{ 'checked' if preferencias.tema_escuro }} aria-label="Tema escuro"><span></span></label>
+      </article>
+      <article>
+        <span>{{ ic.escudo() }}<div><strong>Resumo semanal</strong><p>Análise toda segunda-feira</p></div></span>
+        <label class="switch"><input type="checkbox" name="resumo_semanal" {{ 'checked' if preferencias.resumo_semanal }} aria-label="Resumo semanal"><span></span></label>
+      </article>
+    </div>
+
+    <div class="preference-list" style="margin-top:6px">
+      <article>
+        <span>{{ ic.baixar() }}<div><strong>Seus dados</strong><p>Baixe as transações de {{ mes_rotulo }} em CSV</p></div></span>
+        <a class="btn" href="{{ url_for('exportar_csv') }}">Exportar</a>
+      </article>
+      <article>
+        <span>{{ ic.sair() }}<div><strong>Encerrar sessão</strong><p>Sair da conta neste dispositivo</p></div></span>
+        <a class="btn" href="{{ url_for('logout') }}">Sair</a>
+      </article>
+    </div>
+  </section>
+</form>
+{% endblock %}

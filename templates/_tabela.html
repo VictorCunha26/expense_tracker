@@ -1,0 +1,77 @@
+{# ------------------------------------------------------------------
+   Tabela de transações, usada na Visão geral (compacta) e em Transações.
+   compacta=True esconde Conta e Status, que é o que o painel do zip faz
+   no card "Últimas transações".
+   ------------------------------------------------------------------ #}
+{% import "icones.html" as ic %}
+
+{% macro tabela(linhas, compacta=False) %}
+<div data-slot="table-wrap">
+<table data-slot="table">
+  <thead data-slot="table-header">
+    <tr data-slot="table-row">
+      <th data-slot="table-head">Descrição</th>
+      <th data-slot="table-head">Categoria</th>
+      {% if not compacta %}<th data-slot="table-head">Conta</th>{% endif %}
+      <th data-slot="table-head">Data</th>
+      {% if not compacta %}<th data-slot="table-head">Status</th>{% endif %}
+      <th data-slot="table-head" class="right">Valor</th>
+      <th data-slot="table-head"><span class="sr-only"></span></th>
+    </tr>
+  </thead>
+  <tbody data-slot="table-body">
+    {% for t in linhas %}
+    {% set receita = t.tipo == 'receita' %}
+    <tr data-slot="table-row">
+      <td data-slot="table-cell">
+        <div class="transaction-name">
+          <span class="transaction-icon">{{ ic.seta_baixo_esq() if receita else ic.recibo() }}</span>
+          <span>
+            <strong>{{ t.nome_despesa }}</strong>
+            {% if t.descricao %}<small title="{{ t.descricao }}">{{ t.descricao }}</small>{% endif %}
+          </span>
+        </div>
+      </td>
+      <td data-slot="table-cell">
+        {% set cor = cores.get(t.categoria, '#64748b') %}
+        <span class="category-badge" style="color:{{ cor }};border-color:{{ cor }}55;background:{{ cor }}12">{{ t.categoria or 'Outros' }}</span>
+      </td>
+      {% if not compacta %}<td data-slot="table-cell" class="muted-cell">{{ t.conta or '—' }}</td>{% endif %}
+      <td data-slot="table-cell" class="muted-cell">{{ t.data|data_curta }}</td>
+      {% if not compacta %}
+        <td data-slot="table-cell"><span class="status {{ t.status or 'pago' }}">{{ 'Pendente' if t.status == 'pendente' else 'Pago' }}</span></td>
+      {% endif %}
+      <td data-slot="table-cell" class="amount-cell {{ 'receita' if receita else 'despesa' }}">
+        <span class="valor">{{ '+ ' if receita else '− ' }}{{ t.valor|brl }}</span>
+      </td>
+      <td data-slot="table-cell">
+        <details class="menu">
+          <summary class="btn btn-ghost btn-icon" aria-label="Ações de {{ t.nome_despesa }}">{{ ic.tres_pontos() }}</summary>
+          <div class="dark-menu">
+            <button type="button" data-editar
+                    data-id="{{ t.id }}"
+                    data-nome="{{ t.nome_despesa }}"
+                    data-valor="{{ '%.2f'|format(t.valor|float) }}"
+                    data-data="{{ (t.data or '')[:10] }}"
+                    data-categoria="{{ t.categoria or 'Outros' }}"
+                    data-conta="{{ t.conta or '' }}"
+                    data-status="{{ t.status or 'pago' }}"
+                    data-tipo="{{ t.tipo or 'despesa' }}"
+                    data-descricao="{{ t.descricao or '' }}"
+                    data-recorrente="{{ '1' if t.recorrente else '' }}">{{ ic.lapis() }} Editar</button>
+            <div class="menu-separator"></div>
+            <button type="button" class="destructive" data-excluir
+                    data-acao="{{ url_for('deletar_transacao') }}"
+                    data-campo="id_despesa"
+                    data-id="{{ t.id }}"
+                    data-titulo="Excluir esta transação?"
+                    data-texto="“{{ t.nome_despesa }}” será removida permanentemente.">{{ ic.lixeira() }} Excluir</button>
+          </div>
+        </details>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endmacro %}

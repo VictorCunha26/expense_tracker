@@ -1,0 +1,116 @@
+{# ------------------------------------------------------------------
+   Base das telas de entrada. Metade esquerda é a apresentação
+   (some abaixo de 820px), metade direita é o formulário.
+   ------------------------------------------------------------------ #}
+{% import "icones.html" as ic %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#050607">
+<title>{% block titulo %}Entrar{% endblock %} · Synch Cash</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<main class="login-page">
+
+  <section class="login-story" aria-label="Apresentação Synch Cash">
+    <div class="login-story-inner">
+      <div class="brand-lockup">
+        <div class="brand-mark"><img src="{{ url_for('static', filename='logo.png') }}" alt=""></div>
+        <div class="brand-copy">
+          <strong>Synch Cash</strong>
+          <span>Seu dinheiro sob controle</span>
+        </div>
+      </div>
+
+      <div class="login-message">
+        <span class="login-eyebrow"><i></i> Controle financeiro inteligente</span>
+        <h1>Clareza para cada <em>decisão financeira.</em></h1>
+        <p>Organize gastos, acompanhe metas e entenda para onde seu dinheiro está indo — tudo em um só lugar.</p>
+      </div>
+
+      <div class="login-preview" aria-hidden="true">
+        <div class="login-preview-head">
+          <span>Saldo disponível</span>
+          <span class="login-live"><i></i> Atualizado agora</span>
+        </div>
+        <strong>R$ 6.842,50</strong>
+        <small>{{ ic.tendencia_cima() }} 12,4% em relação ao mês passado</small>
+        <div class="login-chart">
+          {% for altura in [34, 48, 39, 60, 52, 76, 67, 89, 82, 100] %}
+            <span style="height:{{ altura }}%"></span>
+          {% endfor %}
+        </div>
+        <div class="login-preview-footer">
+          <span><i class="expense-dot"></i> Despesas <strong>R$ 3.158</strong></span>
+          <span><i class="income-dot"></i> Receitas <strong>R$ 4.800</strong></span>
+        </div>
+      </div>
+
+      <div class="login-trust">
+        <span>{{ ic.escudo() }} Dados protegidos</span>
+        <span>{{ ic.check() }} Controle simples e completo</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="login-access">
+    <div class="login-access-inner">
+      <div class="login-mobile-brand">
+        <div class="brand-lockup">
+          <div class="brand-mark"><img src="{{ url_for('static', filename='logo.png') }}" alt=""></div>
+          <div class="brand-copy">
+            <strong>Synch Cash</strong>
+            <span>Seu dinheiro sob controle</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="login-form-heading">
+        <span class="login-welcome-icon">{{ ic.cadeado() }}</span>
+        <h2>{% block cabecalho %}Bem-vindo de volta{% endblock %}</h2>
+        <p>{% block chamada %}Acesse sua conta para continuar cuidando do seu dinheiro.{% endblock %}</p>
+      </div>
+
+      {% with mensagens = get_flashed_messages() %}
+        {% if mensagens %}
+          <div class="login-flash">
+            {% for m in mensagens %}<div>{{ m }}</div>{% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block formulario %}{% endblock %}
+
+      <div class="login-security">
+        {{ ic.escudo() }}
+        <span>
+          <strong>Ambiente seguro</strong>
+          <small>Autenticação gerenciada pelo Supabase.</small>
+        </span>
+      </div>
+
+      <div class="login-footer">{% block rodape %}{% endblock %}</div>
+      <p class="login-legal">Ao continuar, você concorda com os Termos de Uso e a Política de Privacidade.</p>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  // Mostrar/ocultar senha.
+  document.querySelectorAll("[data-ver-senha]").forEach((botao) => {
+    botao.addEventListener("click", () => {
+      const campo = document.getElementById(botao.dataset.verSenha)
+      const escondida = campo.type === "password"
+      campo.type = escondida ? "text" : "password"
+      botao.setAttribute("aria-label", escondida ? "Ocultar senha" : "Mostrar senha")
+      botao.querySelectorAll("svg").forEach((svg, i) => { svg.style.display = (i === 0) === escondida ? "none" : "" })
+    })
+  })
+</script>
+</body>
+</html>

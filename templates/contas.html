@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+
+{% block conteudo %}
+<div class="view-stack">
+
+  <section class="accounts-grid">
+    {% for c in contas %}
+    <article class="surface account-card">
+      <div class="account-card-top">
+        <span style="color:{{ c.cor }};background:{{ c.cor }}13">
+          {% if c.tipo == 'Cartão de crédito' %}{{ ic.cartao() }}
+          {% elif c.tipo == 'Dinheiro' %}{{ ic.carteira() }}
+          {% else %}{{ ic.banco() }}{% endif %}
+        </span>
+        <details class="menu">
+          <summary class="btn btn-ghost btn-icon" aria-label="Ações de {{ c.nome }}">{{ ic.tres_pontos() }}</summary>
+          <div class="dark-menu">
+            <button type="button" data-editar-conta
+                    data-id="{{ c.id }}" data-nome="{{ c.nome }}" data-tipo="{{ c.tipo }}"
+                    data-saldo="{{ '%.2f'|format(c.saldo|float) }}" data-detalhe="{{ c.detalhe or '' }}"
+                    data-cor="{{ c.cor }}">{{ ic.lapis() }} Editar</button>
+            <div class="menu-separator"></div>
+            <button type="button" class="destructive" data-excluir
+                    data-acao="{{ url_for('deletar_conta') }}" data-campo="id" data-id="{{ c.id }}"
+                    data-titulo="Excluir esta conta?"
+                    data-texto="“{{ c.nome }}” será removida. As transações já lançadas continuam no histórico.">{{ ic.lixeira() }} Excluir</button>
+          </div>
+        </details>
+      </div>
+      <p>{{ c.tipo }}</p>
+      <h3>{{ c.nome }}</h3>
+      <strong class="valor">{{ c.saldo|brl }}</strong>
+      <small>{{ c.detalhe }}</small>
+    </article>
+    {% endfor %}
+
+    <button class="surface add-account-card" data-abrir="modal-conta" data-nova-conta>
+      {{ ic.mais() }}
+      <strong>Adicionar conta ou cartão</strong>
+      <span>Organize todos os seus saldos em um só lugar</span>
+    </button>
+  </section>
+
+  <section class="surface account-summary">
+    <div class="panel-title-row">
+      <div><h2>Resumo das contas</h2><p>Visão consolidada do seu dinheiro</p></div>
+    </div>
+    <div class="account-summary-grid">
+      <div><span>Saldo total</span><strong class="valor">{{ total|brl }}</strong></div>
+      <div><span>Faturas atuais</span><strong class="negative valor">{{ faturas|brl }}</strong></div>
+      <div><span>Contas conectadas</span><strong>{{ contas|length }}</strong></div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}
+
+{% block modais %}
+<dialog class="modal narrow" id="modal-conta">
+  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
+  <div class="modal-header">
+    <h2 id="titulo-conta">Nova conta ou cartão</h2>
+    <p>Organize seu dinheiro por origem e forma de pagamento.</p>
+  </div>
+  <form class="simple-form" method="POST" action="{{ url_for('salvar_conta') }}">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <input type="hidden" name="id" id="conta-id">
+
+    <label class="field">
+      <span>Nome</span>
+      <input class="input" name="nome" id="conta-nome" required placeholder="Ex.: Banco principal">
+    </label>
+
+    <div class="form-grid">
+      <label class="field">
+        <span>Tipo</span>
+        <select class="input" name="tipo" id="conta-tipo">
+          {% for t in tipos_conta %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span id="rotulo-saldo">Saldo</span>
+        <input class="input" name="saldo" id="conta-saldo" inputmode="decimal" placeholder="0,00">
+      </label>
+    </div>
+
+    <label class="field">
+      <span>Detalhes</span>
+      <input class="input" name="detalhe" id="conta-detalhe" placeholder="Agência, limite ou observação">
+    </label>
+
+    <label class="field">
+      <span>Cor de identificação</span>
+      <select class="input" name="cor" id="conta-cor">
+        <option value="#22c55e">Verde</option>
+        <option value="#8b5cf6">Roxo</option>
+        <option value="#f59e0b">Âmbar</option>
+        <option value="#3b82f6">Azul</option>
+        <option value="#06b6d4">Ciano</option>
+      </select>
+    </label>
+
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn primary-button">Salvar conta</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

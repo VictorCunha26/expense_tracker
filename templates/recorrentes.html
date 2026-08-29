@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+
+{% block conteudo %}
+<div class="view-stack">
+  <section class="surface recurring-panel">
+    <div class="panel-title-row">
+      <div><h2>Despesas recorrentes</h2><p>Ative, pause ou adicione cobranças automáticas</p></div>
+      <button class="btn primary-button" data-abrir="modal-recorrente">{{ ic.mais() }} Nova recorrência</button>
+    </div>
+
+    {% if recorrentes %}
+    <div class="recurring-list">
+      {% for r in recorrentes %}
+      <article class="{{ '' if r.ativo else 'inativo' }}">
+        <span class="recurring-icon">{{ ic.repetir() }}</span>
+        <div class="recurring-main">
+          <strong>{{ r.nome }}</strong>
+          <span class="category-badge" style="color:{{ r.cor }};border-color:{{ r.cor }}55;background:{{ r.cor }}12">{{ r.categoria }}</span>
+        </div>
+        <div>
+          <span>Próximo lançamento</span>
+          <strong>{{ r.proximo }}</strong>
+        </div>
+        <strong class="valor">{{ r.valor|brl }}</strong>
+        <div class="row-actions">
+          {# O switch envia sozinho: alternar já é a confirmação. #}
+          <form method="POST" action="{{ url_for('alternar_recorrente') }}">
+            <input type="hidden" name="origem" value="{{ request.full_path }}">
+            <input type="hidden" name="id" value="{{ r.id }}">
+            <input type="hidden" name="ativo" value="{{ '0' if r.ativo else '1' }}">
+            <label class="switch" title="{{ 'Pausar' if r.ativo else 'Ativar' }} {{ r.nome }}">
+              <input type="checkbox" {{ 'checked' if r.ativo }} onchange="this.form.submit()"
+                     aria-label="{{ 'Pausar' if r.ativo else 'Ativar' }} {{ r.nome }}">
+              <span></span>
+            </label>
+          </form>
+          <button type="button" class="btn btn-ghost btn-icon" data-excluir
+                  data-acao="{{ url_for('deletar_recorrente') }}" data-campo="id" data-id="{{ r.id }}"
+                  data-titulo="Remover esta recorrência?"
+                  data-texto="“{{ r.nome }}” deixará de aparecer aqui."
+                  aria-label="Excluir {{ r.nome }}">{{ ic.lixeira() }}</button>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      {{ ic.repetir() }}
+      <h3>Nenhuma recorrência</h3>
+      <p>Cadastre aluguel, assinaturas e o que mais se repete todo mês.</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+
+{% block modais %}
+<dialog class="modal narrow" id="modal-recorrente">
+  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
+  <div class="modal-header">
+    <h2>Nova recorrência</h2>
+    <p>Cadastre uma cobrança que se repete todos os meses.</p>
+  </div>
+  <form class="simple-form" method="POST" action="{{ url_for('salvar_recorrente') }}">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <label class="field">
+      <span>Nome</span>
+      <input class="input" name="nome" required placeholder="Ex.: Netflix">
+    </label>
+    <label class="field">
+      <span>Categoria</span>
+      <select class="input" name="categoria">
+        {% for c in categorias_despesa %}
+          <option value="{{ c }}" {{ 'selected' if c == 'Assinaturas' }}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-grid">
+      <label class="field">
+        <span>Valor mensal</span>
+        <input class="input" name="valor" inputmode="decimal" required placeholder="0,00">
+      </label>
+      <label class="field">
+        <span>Dia do mês</span>
+        <input class="input" type="number" name="dia" min="1" max="28" value="5">
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn primary-button">Criar recorrência</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

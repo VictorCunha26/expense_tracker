@@ -1,0 +1,250 @@
+{% import "icones.html" as ic %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#050607">
+<title>{{ titulo }} · Synch Cash</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="layout">
+
+  {# ---------------- Sidebar ---------------- #}
+  <aside class="synch-sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="brand-lockup">
+        <div class="brand-mark"><img src="{{ url_for('static', filename='logo.png') }}" alt=""></div>
+        <div class="brand-copy">
+          <strong>Synch Cash</strong>
+          <span>Seu dinheiro sob controle</span>
+        </div>
+      </div>
+    </div>
+
+    <nav class="sidebar-menu-list">
+      {% set itens = [
+        ("overview",     "Visão geral",           url_for('index'),          ic.painel()),
+        ("transactions", "Transações",            url_for('transacoes'),     ic.seta_baixo_esq()),
+        ("accounts",     "Contas e cartões",      url_for('contas'),         ic.cartao()),
+        ("budgets",      "Orçamentos",            url_for('orcamentos'),     ic.barras()),
+        ("recurring",    "Recorrentes",           url_for('recorrentes'),    ic.repetir()),
+        ("goals",        "Metas",                 url_for('metas'),          ic.alvo()),
+        ("reports",      "Relatórios",            url_for('relatorios'),     ic.relatorio()),
+        ("assistant",    "Assistente financeiro", url_for('assistente'),     ic.brilho()),
+        ("settings",     "Configurações",         url_for('configuracoes'),  ic.engrenagem()),
+      ] %}
+      {% for chave, rotulo, destino, icone in itens %}
+        <a class="sidebar-nav-button {{ 'active' if tela == chave }}" href="{{ destino }}"
+           {{ 'aria-current=page'|safe if tela == chave }}>{{ icone }}<span>{{ rotulo }}</span></a>
+      {% endfor %}
+    </nav>
+
+    <div class="sidebar-footer">
+      <details class="menu" style="display:block">
+        <summary style="display:block" aria-label="Menu da conta">
+          <span class="profile-card">
+            <span class="profile-avatar">{{ (preferencias.nome or email or "?")[0]|upper }}</span>
+            <span class="profile-copy">
+              <strong>{{ preferencias.nome or "Usuário" }}</strong>
+              <small>{{ email }}</small>
+            </span>
+            {{ ic.chevron() }}
+          </span>
+        </summary>
+        <div class="dark-menu left up" style="width:100%">
+          <div class="menu-label">Minha conta</div>
+          <a href="{{ url_for('configuracoes') }}">{{ ic.usuario() }} Perfil</a>
+          <a href="{{ url_for('configuracoes') }}">{{ ic.escudo() }} Segurança</a>
+          <div class="menu-separator"></div>
+          <a class="destructive" href="{{ url_for('logout') }}">{{ ic.sair() }} Sair</a>
+        </div>
+      </details>
+    </div>
+  </aside>
+
+  {# ---------------- Conteúdo ---------------- #}
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-title">
+        <button class="btn btn-icon sidebar-toggle-button" id="abrir-menu" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false">{{ ic.menu() }}</button>
+        <div>
+          <h1>{{ titulo }}</h1>
+          <p>{{ subtitulo }}</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        {# Trocar o mês recarrega a tela atual com ?mes=... #}
+        <form method="GET" id="form-mes">
+          <select class="input period-selector" name="mes" aria-label="Período"
+                  onchange="document.getElementById('form-mes').submit()">
+            {% for m in meses %}
+              <option value="{{ m.valor }}" {{ 'selected' if m.valor == mes }}>{{ m.rotulo }}</option>
+            {% endfor %}
+          </select>
+        </form>
+
+        <form class="global-search" method="GET" action="{{ url_for('transacoes') }}" role="search">
+          {{ ic.busca() }}
+          <input class="input" type="search" name="q" placeholder="Buscar transação, categoria..." aria-label="Buscar">
+        </form>
+
+        <button class="btn btn-icon notification-button" id="alternar-valores"
+                aria-label="Ocultar valores" aria-pressed="false">{{ ic.olho() }}</button>
+
+        <details class="menu">
+          <summary class="btn btn-icon notification-button notificacoes" aria-label="Notificações">
+            {{ ic.sino() }}{% if pendentes %}<i></i>{% endif %}
+          </summary>
+          <div class="dark-menu notification-menu">
+            <div class="menu-label">Notificações</div>
+            <div class="menu-separator"></div>
+            <a href="{{ url_for('transacoes', status='pendente') }}">
+              {{ ic.recibo() }}<span><strong>{{ pendentes }} conta{{ 's' if pendentes != 1 }} pendente{{ 's' if pendentes != 1 }}</strong><small>Confira os próximos vencimentos</small></span>
+            </a>
+            <a href="{{ url_for('metas') }}">
+              {{ ic.alvo() }}<span><strong>Metas em andamento</strong><small>Acompanhe seu progresso</small></span>
+            </a>
+          </div>
+        </details>
+
+        <button class="btn primary-button new-transaction-button" data-abrir="modal-transacao">
+          {{ ic.mais() }} <span>Nova transação</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      {% block conteudo %}{% endblock %}
+    </main>
+
+    {# ---------------- Navegação mobile ---------------- #}
+    <nav class="mobile-bottom-nav">
+      <a class="{{ 'active' if tela == 'overview' }}" href="{{ url_for('index') }}">{{ ic.casa() }}<span>Início</span></a>
+      <a class="{{ 'active' if tela == 'transactions' }}" href="{{ url_for('transacoes') }}">{{ ic.recibo() }}<span>Transações</span></a>
+      <button class="mobile-add" data-abrir="modal-transacao" aria-label="Nova transação">{{ ic.mais() }}<span>Novo</span></button>
+      <a class="{{ 'active' if tela == 'budgets' }}" href="{{ url_for('orcamentos') }}">{{ ic.barras() }}<span>Orçamentos</span></a>
+      <a class="{{ 'active' if tela == 'settings' }}" href="{{ url_for('configuracoes') }}">{{ ic.usuario() }}<span>Perfil</span></a>
+    </nav>
+  </div>
+</div>
+
+{# ---------------- Modal: nova / editar transação ---------------- #}
+<dialog class="modal" id="modal-transacao">
+  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
+  <div class="modal-header">
+    <h2 id="titulo-transacao">Nova transação</h2>
+    <p>Registre uma movimentação com todos os detalhes importantes.</p>
+  </div>
+
+  <form class="transaction-form" method="POST" action="{{ url_for('salvar_transacao') }}" id="form-transacao">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <input type="hidden" name="id_despesa" id="campo-id">
+    <input type="hidden" name="tipo" id="campo-tipo" value="despesa">
+
+    <div class="type-toggle">
+      <button type="button" class="active despesa" data-tipo="despesa">{{ ic.seta_cima_dir() }} Despesa</button>
+      <button type="button" data-tipo="receita">{{ ic.seta_baixo_esq() }} Receita</button>
+    </div>
+
+    <label class="field field-span-2">
+      <span>Descrição</span>
+      <input class="input" name="nome_despesa" id="campo-nome" required placeholder="Ex.: Supermercado">
+    </label>
+
+    <label class="field">
+      <span>Valor total</span>
+      <input class="input" name="valor" id="campo-valor" required inputmode="decimal" placeholder="R$ 0,00">
+    </label>
+
+    <label class="field">
+      <span>Data</span>
+      <input class="input" type="date" name="data" id="campo-data" required value="{{ hoje }}">
+    </label>
+
+    <label class="field">
+      <span>Categoria</span>
+      <select class="input" name="categoria" id="campo-categoria">
+        {% for c in categorias %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Conta ou cartão</span>
+      <select class="input" name="conta" id="campo-conta">
+        {% if not nomes_contas %}<option value="">Nenhuma conta cadastrada</option>{% endif %}
+        {% for n in nomes_contas %}<option value="{{ n }}">{{ n }}</option>{% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Status</span>
+      <select class="input" name="status" id="campo-status">
+        <option value="pago">Pago</option>
+        <option value="pendente">Pendente</option>
+      </select>
+    </label>
+
+    <label class="field" id="campo-parcelas-wrap">
+      <span>Parcelas</span>
+      <select class="input" name="parcelas" id="campo-parcelas">
+        {% for n in [1, 2, 3, 4, 5, 6, 10, 12] %}<option value="{{ n }}">{{ n }}x</option>{% endfor %}
+      </select>
+    </label>
+
+    <label class="field field-span-2">
+      <span>Observações</span>
+      <input class="input" name="descricao" id="campo-descricao" placeholder="Informação opcional">
+    </label>
+
+    <label class="recurring-option field-span-2">
+      <span>{{ ic.repetir() }}<span><strong>Repetir mensalmente</strong><small>Cria uma regra em despesas recorrentes</small></span></span>
+      <span class="switch"><input type="checkbox" name="recorrente" id="campo-recorrente"><span></span></span>
+    </label>
+
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn primary-button">{{ ic.check() }} <span id="rotulo-salvar">Adicionar transação</span></button>
+    </div>
+  </form>
+</dialog>
+
+{# ---------------- Modal: confirmar exclusão ---------------- #}
+<dialog class="modal narrow" id="modal-excluir">
+  <div class="modal-header">
+    <h2 id="titulo-excluir">Excluir?</h2>
+    <p id="texto-excluir">Esta ação não pode ser desfeita.</p>
+  </div>
+  <form method="POST" id="form-excluir">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <input type="hidden" name="id" id="excluir-id">
+    <input type="hidden" name="id_despesa" id="excluir-id-despesa">
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn delete-button">Excluir</button>
+    </div>
+  </form>
+</dialog>
+
+{% block modais %}{% endblock %}
+
+{# ---------------- Avisos ---------------- #}
+{% with mensagens = get_flashed_messages() %}
+  {% if mensagens %}
+    <div class="toast-stack">
+      {% for m in mensagens %}
+        <div class="toast">{{ ic.check() }}<span>{{ m }}</span></div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<div class="chart-tooltip" id="tooltip" role="status"></div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

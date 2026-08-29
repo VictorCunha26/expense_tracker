@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+
+{% block conteudo %}
+<div class="view-stack">
+
+  <section class="report-kpis">
+    <article class="surface">
+      <span>Receitas em 6 meses</span>
+      <strong class="positive valor">{{ receitas_total|brl }}</strong>
+      <small>{{ ic.tendencia_cima() }} Entradas acumuladas do período</small>
+    </article>
+    <article class="surface">
+      <span>Despesas em 6 meses</span>
+      <strong class="valor">{{ despesas_total|brl }}</strong>
+      <small>{{ ic.tendencia_baixo() }} Saídas acumuladas do período</small>
+    </article>
+    <article class="surface">
+      <span>Economia acumulada</span>
+      <strong class="{{ 'positive' if economia >= 0 else 'negative' }} valor">{{ economia|brl }}</strong>
+      <small>{{ pct_economia|round|int }}% das receitas</small>
+    </article>
+  </section>
+
+  <section class="surface report-chart-card">
+    <div class="panel-title-row">
+      <div><h2>Receitas x despesas</h2><p>Comparativo dos últimos seis meses</p></div>
+      <a class="btn" href="{{ url_for('exportar_csv') }}">{{ ic.baixar() }} Exportar relatório</a>
+    </div>
+
+    <div class="report-chart">
+      {% if barras %}
+      <svg viewBox="0 0 {{ barras.largura }} {{ barras.altura }}" role="img"
+           aria-label="Receitas e despesas dos últimos seis meses">
+        {% for g in barras.grade %}
+          <line class="chart-grid-line" x1="{{ barras.pad_x }}" x2="{{ barras.largura - barras.pad_x }}" y1="{{ g.y }}" y2="{{ g.y }}"/>
+          <text class="chart-axis-label" x="0" y="{{ g.y + 4 }}">{{ g.rotulo }}</text>
+        {% endfor %}
+        {% for grupo in barras.grupos %}
+          {% for b in grupo.barras %}
+            <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.largura }}" height="{{ b.altura }}"
+                  rx="4" fill="{{ b.cor }}"
+                  data-rotulo="{{ b.rotulo }} · {{ grupo.mes }}" data-valor="{{ b.valor|brl }}"></rect>
+          {% endfor %}
+          <text class="chart-axis-label" x="{{ grupo.x }}" y="{{ barras.altura - 4 }}" text-anchor="middle">{{ grupo.mes }}</text>
+        {% endfor %}
+      </svg>
+      {% else %}
+      <div class="empty-state">{{ ic.relatorio() }}<h3>Sem dados no período</h3><p>Registre movimentações para gerar o relatório.</p></div>
+      {% endif %}
+    </div>
+
+    <div class="chart-legend">
+      <span><i style="background:#22c55e"></i> Receitas</span>
+      <span><i style="background:#374151"></i> Despesas</span>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

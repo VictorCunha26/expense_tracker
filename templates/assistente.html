@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+
+{% block conteudo %}
+<div class="assistant-layout">
+
+  <section class="surface insights-panel">
+    <div class="assistant-orb">{{ ic.brilho() }}</div>
+    <span class="eyebrow">Análise inteligente</span>
+    <h2>{{ 'Você está dentro do orçamento.' if dentro_do_orcamento else 'Seu orçamento precisa de atenção.' }}</h2>
+    <p>Os insights são calculados direto pelas movimentações de {{ mes_rotulo }} — nada sai do seu banco de dados.</p>
+
+    <div class="insight-list">
+      <article>
+        {{ ic.tendencia_baixo() }}
+        <div>
+          <strong>Categoria principal</strong>
+          <span>
+            {% if maior_categoria %}
+              {{ maior_categoria[0] }} concentra {{ pct_maior|round|int }}% dos gastos.
+            {% else %}
+              Sem dados suficientes neste mês.
+            {% endif %}
+          </span>
+        </div>
+      </article>
+      <article>
+        {{ ic.raio() }}
+        <div>
+          <strong>Margem do orçamento</strong>
+          <span>
+            {% if dentro_do_orcamento and orcamento_total %}
+              {{ pct_disponivel|round|int }}% ainda disponível.
+            {% elif orcamento_total %}
+              Limite mensal ultrapassado.
+            {% else %}
+              Defina limites na aba Orçamentos.
+            {% endif %}
+          </span>
+        </div>
+      </article>
+      <article>
+        {{ ic.alvo() }}
+        <div>
+          <strong>Próxima melhor ação</strong>
+          <span>Revise os recorrentes e direcione a diferença para uma meta.</span>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="surface chat-panel">
+    <div class="chat-heading">
+      <span>{{ ic.robo() }}</span>
+      <div><h2>Assistente Synch</h2><p>Análise local das suas movimentações</p></div>
+      <i></i>
+    </div>
+
+    <div class="chat-messages" id="chat">
+      <div class="assistant-message">
+        Olá, {{ (preferencias.nome or 'tudo bem').split(' ')[0] }}! Pergunte onde você mais gasta,
+        como economizar ou qual meta priorizar.
+      </div>
+      {% for m in conversa %}
+        <div class="{{ 'user-message' if m.quem == 'usuario' else 'assistant-message' }}">{{ m.texto }}</div>
+      {% endfor %}
+    </div>
+
+    <div class="suggestion-chips">
+      <button type="button" data-sugestao="Onde estou gastando mais?">Onde gasto mais?</button>
+      <button type="button" data-sugestao="Como economizar este mês?">Como economizar?</button>
+      <button type="button" data-sugestao="Qual meta devo priorizar?">Qual meta priorizar?</button>
+    </div>
+
+    <form class="chat-input" method="POST" action="{{ url_for('assistente') }}">
+      <input class="input" name="pergunta" id="pergunta" required
+             placeholder="Pergunte sobre suas finanças..." autocomplete="off">
+      <button class="btn btn-icon" type="submit" aria-label="Enviar">{{ ic.enviar() }}</button>
+    </form>
+    <small class="assistant-disclaimer">
+      Análise baseada nos seus próprios dados; não substitui orientação financeira profissional.
+    </small>
+  </section>
+
+</div>
+{% endblock %}

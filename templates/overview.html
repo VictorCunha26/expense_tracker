@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+{% from "_tabela.html" import tabela with context %}
+
+{% block conteudo %}
+<div class="view-stack">
+
+  {# ---------------- KPIs ---------------- #}
+  <section class="kpi-grid">
+    <article class="surface kpi-card">
+      <div>
+        <p>Saldo disponível</p>
+        <strong class="kpi-value valor">{{ saldo|brl }}</strong>
+        <span>Contas + resultado do mês</span>
+      </div>
+      <div class="kpi-icon positive">{{ ic.carteira() }}</div>
+    </article>
+
+    <article class="surface kpi-card">
+      <div>
+        <p>Gastos no mês</p>
+        <strong class="kpi-value valor">{{ gasto|brl }}</strong>
+        <span>{{ mes_rotulo }}</span>
+      </div>
+      <div class="kpi-icon neutral">{{ ic.tendencia_baixo() }}</div>
+    </article>
+
+    <article class="surface kpi-card">
+      <div>
+        <p>Orçamento restante</p>
+        <strong class="kpi-value valor {{ 'warning' if restante < 0 }}">{{ restante|brl }}</strong>
+        <span>{{ pct_restante|round|int }}% do orçamento total</span>
+      </div>
+      <div class="kpi-icon positive">{{ ic.medidor() }}</div>
+    </article>
+
+    <article class="surface kpi-card">
+      <div>
+        <p>Contas pendentes</p>
+        <strong class="kpi-value warning valor">{{ pendente|brl }}</strong>
+        <span>{{ qtd_pendentes }} conta{{ 's' if qtd_pendentes != 1 }} para pagar</span>
+      </div>
+      <div class="kpi-icon warning">{{ ic.recibo() }}</div>
+    </article>
+  </section>
+
+  {# ---------------- Gráficos ---------------- #}
+  <section class="charts-grid">
+    <article class="surface chart-card">
+      <div class="card-heading">
+        <div><h2>Gastos ao longo do mês</h2><p>Acumulado das despesas pagas</p></div>
+        <span class="period-chip">{{ mes_rotulo }}</span>
+      </div>
+      <div class="line-chart-wrap">
+        {% if grafico %}
+        <svg viewBox="0 0 {{ grafico.largura }} {{ grafico.altura }}" preserveAspectRatio="none" role="img"
+             aria-label="Gasto acumulado dia a dia em {{ mes_rotulo }}">
+          <defs>
+            <linearGradient id="gradienteGasto" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#22c55e" stop-opacity=".25"/>
+              <stop offset="100%" stop-color="#22c55e" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          {% for i in range(5) %}
+            {% set y = 20 + (grafico.altura - 40) * i / 4 %}
+            <line class="chart-grid-line" x1="18" x2="{{ grafico.largura - 18 }}" y1="{{ y }}" y2="{{ y }}"/>
+          {% endfor %}
+          <path class="chart-area" d="{{ grafico.area }}"/>
+          <polyline class="chart-line" points="{{ grafico.linha }}"/>
+          {% for p in grafico.pontos %}
+            <rect class="chart-hit" x="{{ p.x - 6 }}" y="0" width="12" height="{{ grafico.altura }}"
+                  data-rotulo="{{ p.rotulo }}" data-valor="{{ p.valor|brl }}"></rect>
+            <circle class="chart-dot" cx="{{ p.x }}" cy="{{ p.y }}" r="4"/>
+          {% endfor %}
+        </svg>
+        {% else %}
+        <div class="empty-state">{{ ic.barras() }}<h3>Sem gastos neste mês</h3><p>Adicione uma transação para ver o gráfico.</p></div>
+        {% endif %}
+      </div>
+    </article>
+
+    <article class="surface chart-card">
+      <div class="card-heading">
+        <div><h2>Gastos por categoria</h2><p>Distribuição do período</p></div>
+        <span class="period-chip">Categorias</span>
+      </div>
+      <div class="category-chart-content">
+        <div class="donut-wrap">
+          {% if donut %}
+          <svg viewBox="0 0 200 200" role="img" aria-label="Distribuição dos gastos por categoria">
+            <g transform="rotate(-90 100 100)">
+              {% for s in donut.segmentos %}
+              <circle cx="100" cy="100" r="{{ donut.raio }}" fill="none"
+                      stroke="{{ s.cor }}" stroke-width="19"
+                      stroke-dasharray="{{ s.dasharray }}" stroke-dashoffset="{{ s.dashoffset }}"
+                      data-rotulo="{{ s.nome }}"
+                      data-valor="{{ s.valor|brl }} · {{ s.pct|round(1) }}%"></circle>
+              {% endfor %}
+            </g>
+          </svg>
+          <div class="donut-center">
+            <strong class="valor">{{ gasto|brl }}</strong>
+            <span>Total de gastos</span>
+          </div>
+          {% else %}
+          <div class="empty-state">{{ ic.alvo() }}<h3>Nada por aqui</h3><p>Sem despesas pagas no período.</p></div>
+          {% endif %}
+        </div>
+        <div class="category-list">
+          {% for c in lista_categorias %}
+          <div>
+            <span><i style="background:{{ c.cor }}"></i>{{ c.nome }}</span>
+            <strong class="valor">{{ c.valor|brl }}</strong>
+            <small>{{ c.pct|round|int }}%</small>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </article>
+  </section>
+
+  {# ---------------- Orçamento + últimas transações ---------------- #}
+  <section class="bottom-grid">
+    <article class="surface budget-card">
+      <div class="card-heading">
+        <div><h2>Orçamento mensal</h2><p>Limite total definido</p></div>
+        <strong class="{{ 'negative' if pct_orcamento > 100 else 'positive' }}">{{ pct_orcamento|round|int }}% utilizado</strong>
+      </div>
+      <p class="budget-total"><strong class="valor">{{ gasto|brl }}</strong> de <span class="valor">{{ orcamento_total|brl }}</span></p>
+      <div class="progress budget-progress {{ 'danger-progress' if pct_orcamento > 85 }}">
+        <div style="width:{{ [pct_orcamento, 100]|min }}%"></div>
+      </div>
+      <div class="budget-scale"><span>R$ 0</span><span>50%</span><span>100%</span></div>
+      <div class="insight-box">
+        <span>{{ ic.tendencia_cima() }}</span>
+        <p>
+          Você ainda pode gastar <strong class="valor">{{ [restante, 0]|max|brl }}</strong> neste período.
+          <small>{{ 'Mantenha o bom controle!' if restante >= 0 else 'Seu limite foi ultrapassado.' }}</small>
+        </p>
+      </div>
+    </article>
+
+    <article class="surface recent-card">
+      <div class="card-heading recent-heading">
+        <div><h2>Últimas transações</h2><p>Movimentações mais recentes</p></div>
+        <a href="{{ url_for('transacoes') }}">Ver todas {{ ic.seta_direita() }}</a>
+      </div>
+      {% if recentes %}
+        {{ tabela(recentes, compacta=True) }}
+      {% else %}
+        <div class="empty-state">{{ ic.recibo() }}<h3>Nenhuma transação</h3><p>Comece registrando sua primeira movimentação.</p></div>
+      {% endif %}
+    </article>
+  </section>
+
+</div>
+{% endblock %}

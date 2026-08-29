@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+
+{% block conteudo %}
+<div class="view-stack">
+  <section class="surface budgets-panel">
+    <div class="panel-title-row">
+      <div><h2>Orçamentos por categoria</h2><p>Clique em uma categoria para ajustar o limite</p></div>
+      <span class="period-chip">{{ ic.calendario() }} {{ mes_rotulo }}</span>
+    </div>
+
+    <div class="budget-list">
+      {% for o in orcamentos %}
+      <button class="budget-item" type="button" data-editar-orcamento
+              data-categoria="{{ o.nome }}" data-limite="{{ '%.2f'|format(o.limite) }}">
+        <div class="budget-row-title">
+          <span><i style="background:{{ o.cor }}"></i>{{ o.nome }}</span>
+          <strong class="valor">{{ o.gasto|brl }} <small>de {{ o.limite|brl }}</small></strong>
+        </div>
+        <div class="progress {{ 'danger-progress' if o.pct > 85 else 'category-progress' }}">
+          <div style="width:{{ o.pct }}%"></div>
+        </div>
+        <div class="budget-row-meta">
+          <span>{{ o.pct|round|int }}% utilizado</span>
+          <span class="valor">{{ o.disponivel|brl }} disponível</span>
+        </div>
+      </button>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block modais %}
+<dialog class="modal narrow" id="modal-orcamento">
+  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
+  <div class="modal-header">
+    <h2>Editar orçamento de <span id="orcamento-categoria-rotulo"></span></h2>
+    <p>Defina o limite mensal desta categoria.</p>
+  </div>
+  <form class="simple-form" method="POST" action="{{ url_for('salvar_orcamento') }}">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <input type="hidden" name="categoria" id="orcamento-categoria">
+    <label class="field">
+      <span>Novo limite</span>
+      <input class="input" name="limite" id="orcamento-limite" inputmode="decimal" required>
+    </label>
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn primary-button">Salvar limite</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
