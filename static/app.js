@@ -143,11 +143,20 @@
      Contas, orçamentos e metas
      --------------------------------------------------------- */
 
-  const rotuloSaldo = () => {
-    const rotulo = $("#rotulo-saldo")
-    if (rotulo) rotulo.textContent = $("#conta-tipo").value === "Cartão de crédito" ? "Fatura atual" : "Saldo"
+  // Cartão troca o campo de saldo pelos dias do ciclo: o valor da fatura
+  // é calculado pelos lançamentos, então não existe saldo pra digitar.
+  const ajustarTipoConta = () => {
+    const tipo = $("#conta-tipo")
+    if (!tipo) return
+    const cartao = tipo.value === "Cartão de crédito"
+    $("#campo-saldo").hidden = cartao
+    $("#conta-saldo").disabled = cartao
+    $("#campo-ciclo").hidden = !cartao
+    $("#dica-cartao").hidden = !cartao
+    const rotulo = $("#campo-saldo span")
+    if (rotulo) rotulo.textContent = tipo.value === "Dinheiro" ? "Valor inicial em espécie" : "Saldo inicial"
   }
-  $("#conta-tipo")?.addEventListener("change", rotuloSaldo)
+  $("#conta-tipo")?.addEventListener("change", ajustarTipoConta)
 
   $$("[data-nova-conta]").forEach((botao) => {
     botao.addEventListener("click", () => {
@@ -155,9 +164,47 @@
       $("#conta-nome").value = ""
       $("#conta-saldo").value = ""
       $("#conta-detalhe").value = ""
+      $("#conta-fechamento").value = "28"
+      $("#conta-vencimento").value = "10"
       $("#titulo-conta").textContent = "Nova conta ou cartão"
-      rotuloSaldo()
+      ajustarTipoConta()
     })
+  })
+
+  /* ---------------------------------------------------------
+     Fatura do cartão
+     --------------------------------------------------------- */
+
+  document.addEventListener("click", (evento) => {
+    const item = evento.target.closest("[data-pagar-fatura]")
+    if (!item) return
+    const d = item.dataset
+    $("#fatura-conta-id").value = d.id
+    $("#fatura-mes").value = d.mes
+    $("#fatura-valor").value = d.valor
+    $("#fatura-nome").textContent = d.nome
+    $("#fatura-vence").textContent = d.vence
+    $("#fatura-total").textContent = d.valorTexto
+    avisarSaldoInsuficiente()
+    abrir("modal-fatura")
+  })
+
+  // Avisa antes de confirmar que a conta escolhida vai ficar negativa.
+  const avisarSaldoInsuficiente = () => {
+    const origem = $("#fatura-origem")
+    const dica = $("#dica-saldo")
+    if (!origem || !dica) return
+    const saldo = parseFloat(origem.selectedOptions[0]?.dataset.saldo || "0")
+    dica.hidden = saldo >= parseFloat($("#fatura-valor").value || "0")
+  }
+  $("#fatura-origem")?.addEventListener("change", avisarSaldoInsuficiente)
+
+  document.addEventListener("click", (evento) => {
+    const item = evento.target.closest("[data-reabrir]")
+    if (!item) return
+    $("#reabrir-conta-id").value = item.dataset.id
+    $("#reabrir-mes").value = item.dataset.mes
+    $("#form-reabrir").submit()
   })
 
   document.addEventListener("click", (evento) => {
@@ -170,8 +217,10 @@
     $("#conta-saldo").value = String(d.saldo).replace(".", ",")
     $("#conta-detalhe").value = d.detalhe
     $("#conta-cor").value = d.cor
-    $("#titulo-conta").textContent = "Editar conta"
-    rotuloSaldo()
+    $("#conta-fechamento").value = d.fechamento || "28"
+    $("#conta-vencimento").value = d.vencimento || "10"
+    $("#titulo-conta").textContent = d.tipo === "Cartão de crédito" ? "Editar cartão" : "Editar conta"
+    ajustarTipoConta()
     item.closest("details.menu")?.removeAttribute("open")
     abrir("modal-conta")
   })

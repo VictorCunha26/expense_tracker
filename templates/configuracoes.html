@@ -56,7 +56,7 @@
     <div class="preference-list" style="margin-top:6px">
       <article>
         <span>{{ ic.baixar() }}<div><strong>Seus dados</strong><p>Baixe as transações de {{ mes_rotulo }} em CSV</p></div></span>
-        <a class="btn" href="{{ url_for('exportar_csv') }}">Exportar</a>
+        <a class="btn" href="{{ url_for('exportar_csv', mes=mes_url) }}">Exportar</a>
       </article>
       <article>
         <span>{{ ic.sair() }}<div><strong>Encerrar sessão</strong><p>Sair da conta neste dispositivo</p></div></span>

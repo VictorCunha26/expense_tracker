@@ -25,7 +25,7 @@
   <section class="surface report-chart-card">
     <div class="panel-title-row">
       <div><h2>Receitas x despesas</h2><p>Comparativo dos últimos seis meses</p></div>
-      <a class="btn" href="{{ url_for('exportar_csv') }}">{{ ic.baixar() }} Exportar relatório</a>
+      <a class="btn" href="{{ url_for('exportar_csv', mes=mes_url) }}">{{ ic.baixar() }} Exportar relatório</a>
     </div>
 
     <div class="report-chart">

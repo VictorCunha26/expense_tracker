@@ -328,6 +328,30 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .add-account-card > svg, .add-goal > svg { width: 25px; height: 25px; }
 .add-account-card strong, .add-goal strong { color: #cfd2d5; font-size: 12px; }
 .add-account-card span, .add-goal span { max-width: 180px; font-size: 10px; line-height: 1.45; }
+/* Cartão de crédito: fatura calculada, vencimento e ação de pagar. */
+.account-card.cartao { display: flex; flex-direction: column; }
+.account-card.cartao > strong { margin-top: 11px; }
+.fatura-meta { margin-top: 11px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fatura-meta small { color: #69717a; font-size: 9px; }
+.status.atrasada { border-color: #5d2020; background: #21100f; color: #f0625c; }
+.fatura-botao { height: 34px; margin-top: auto; width: 100%; font-size: 11px; }
+.fatura-origem { display: flex; align-items: center; gap: 6px; margin-top: auto; padding-top: 13px; color: #35cc67; font-size: 10px; }
+.fatura-origem svg { width: 13px; flex: 0 0 13px; }
+.fatura-origem.vazia { color: #5b636c; }
+.proximo-ciclo { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; padding: 9px 11px; border: 1px solid #24292e; border-radius: 9px; background: #080a0c; color: #99a0a8; font-size: 10px; line-height: 1.45; transition: 150ms ease; }
+.proximo-ciclo:hover { border-color: #2f6640; background: #0a110d; color: #cdd2d7; }
+.proximo-ciclo svg { width: 13px; height: 13px; flex: 0 0 13px; margin-top: 2px; color: #35cc67; }
+.proximo-ciclo strong { color: #e2e5e7; }
+.proximo-ciclo small { display: block; margin-top: 2px; color: #656d76; font-size: 9px; }
+
+.fatura-resumo { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 15px; border: 1px solid #202429; border-radius: 11px; background: #07090a; }
+.fatura-resumo span { color: #838a93; font-size: 11px; }
+.fatura-resumo strong { color: #f2f4f5; font-size: 20px; letter-spacing: -.035em; }
+.dica { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 12px 13px; border: 1px solid #26301f; border-radius: 10px; background: #0b0f09; color: #8d968a; font-size: 10px; line-height: 1.55; }
+.dica svg { width: 15px; height: 15px; flex: 0 0 15px; margin-top: 1px; color: #6f9c50; }
+.aviso-inline { color: #c98b3f; font-size: 10px; line-height: 1.5; }
+.btn[disabled] { opacity: .5; pointer-events: none; }
+
 .account-summary-grid, .report-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 20px; border: 1px solid #1c2024; border-radius: 12px; overflow: hidden; background: #1c2024; }
 .account-summary-grid > div { padding: 18px; background: #090b0d; }
 .account-summary-grid span { display: block; color: #687079; font-size: 10px; }
@@ -765,3 +789,5 @@ dialog.modal.narrow { width: min(440px, calc(100% - 32px)); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+.ajuda { color: #626a73; font-size: 9px; line-height: 1.5; }

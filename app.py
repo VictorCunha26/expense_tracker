@@ -315,6 +315,127 @@ def _contas(supabase):
     return resposta.data or []
 
 
+def _faturas(supabase):
+    resposta = supabase.table("faturas").select("*").eq("user_id", _uid()).execute()
+    return resposta.data or []
+
+
+# ------------------------------------------------------------------
+# Ciclo do cartao
+#
+# A fatura nao e um valor digitado: ela e a soma do que foi lancado no
+# cartao dentro do ciclo. O ciclo vai do dia seguinte ao fechamento ate
+# o fechamento do mes -- compra feita depois do fechamento ja cai na
+# fatura do mes que vem, que e como cartao funciona de verdade.
+# ------------------------------------------------------------------
+
+def _mes_da_fatura(data_iso, fechamento):
+    """Em qual fatura (YYYY-MM) a compra cai."""
+    ano, mes, dia = int(data_iso[:4]), int(data_iso[5:7]), int(data_iso[8:10])
+    if dia > fechamento:
+        return _somar_meses(date(ano, mes, 1), 1).strftime("%Y-%m")
+    return f"{ano:04d}-{mes:02d}"
+
+
+def _vencimento_da_fatura(mes, fechamento, vencimento):
+    """Data em que a fatura daquele mes vence. Quando o dia do vencimento
+    e menor ou igual ao do fechamento, ele cai no mes seguinte
+    (fecha 28/08, vence 10/09)."""
+    base = date(int(mes[:4]), int(mes[5:7]), 1)
+    if vencimento <= fechamento:
+        base = _somar_meses(base, 1)
+    dia = min(vencimento, _ultimo_dia_do_mes(base.strftime("%Y-%m")))
+    return date(base.year, base.month, dia)
+
+
+def _saldos(lista_contas, transacoes, registros, mes):
+    """Saldo de cada conta ate o fim do mes exibido.
+
+    O campo 'saldo' do cadastro e o saldo INICIAL; em cima dele entra tudo
+    que ja aconteceu ate o mes exibido -- acumulado, nunca so o mes. Se
+    contasse apenas o mes corrente, o saldo voltaria ao valor cadastrado a
+    cada virada e as saidas anteriores sumiriam.
+
+    Tudo e calculado na hora: nada e gravado em contas.saldo. Isso mantem o
+    pagamento da fatura e a despesa comum sob a mesma regra, e faz reabrir
+    uma fatura devolver o valor sem precisar de compensacao.
+    """
+    saldos = {}
+    for c in lista_contas:
+        if c.get("tipo") == "Cartão de crédito":
+            continue
+
+        total = float(c.get("saldo") or 0)
+        for t in transacoes:
+            if t.get("conta") != c["nome"] or t.get("status") != "pago":
+                continue
+            if not t.get("data") or t["data"][:7] > mes:
+                continue
+            total += -_valor(t) if _e_despesa(t) else _valor(t)
+
+        # Fatura paga com esta conta sai no mes em que foi paga.
+        total -= sum(
+            float(r.get("valor_pago") or 0) for r in registros
+            if r.get("status") == "pago" and r.get("pago_com") == c["id"]
+            and (r.get("pago_em") or "")[:7] <= mes
+        )
+        saldos[c["id"]] = total
+    return saldos
+
+
+def _montar_faturas(transacoes, lista_contas, registros, mes):
+    """Uma fatura por cartao no mes selecionado, com valor calculado,
+    data de vencimento e situacao de pagamento."""
+    por_conta = {r["conta_id"]: r for r in registros if r.get("mes") == mes}
+    nomes = {c["id"]: c["nome"] for c in lista_contas}
+    hoje = date.today()
+
+    faturas = []
+    for c in lista_contas:
+        if c.get("tipo") != "Cartão de crédito":
+            continue
+
+        fechamento = int(c.get("fechamento") or 28)
+        vencimento = int(c.get("vencimento") or 10)
+
+        do_cartao = [
+            t for t in transacoes
+            if t.get("conta") == c["nome"] and t.get("data")
+        ]
+        # Receita lancada no cartao e estorno: abate da fatura em vez de somar.
+        def total(lista):
+            return sum(_valor(t) if _e_despesa(t) else -_valor(t) for t in lista)
+
+        itens = [t for t in do_cartao if _mes_da_fatura(t["data"], fechamento) == mes]
+        seguinte = _somar_meses(date(int(mes[:4]), int(mes[5:7]), 1), 1).strftime("%Y-%m")
+        itens_seguinte = [t for t in do_cartao if _mes_da_fatura(t["data"], fechamento) == seguinte]
+
+        registro = por_conta.get(c["id"]) or {}
+        pago = registro.get("status") == "pago"
+        vence = _vencimento_da_fatura(mes, fechamento, vencimento)
+
+        faturas.append({
+            "conta": c,
+            "valor": total(itens),
+            "itens": len(itens),
+            # O que ja passou do fechamento e caiu na proxima fatura. Sem
+            # mostrar isso, a compra "some" e parece que nao foi lancada.
+            "proximo_valor": total(itens_seguinte),
+            "proximo_itens": len(itens_seguinte),
+            "proximo_mes": seguinte,
+            "status": "pago" if pago else "pendente",
+            "pago_com": registro.get("pago_com"),
+            "pago_com_nome": nomes.get(registro.get("pago_com"), "conta removida"),
+            "valor_pago": float(registro.get("valor_pago") or 0),
+            "vence": vence,
+            "vence_texto": f"{vence.day:02d}/{vence.month:02d}",
+            "atrasada": (not pago) and vence < hoje,
+            "fechamento": fechamento,
+            "vencimento": vencimento,
+        })
+    return faturas
+
+
 def _orcamentos(supabase):
     """Devolve {categoria: limite}. Na primeira visita cria os limites padrao,
     senao a tela de orcamentos abriria vazia e sem nada pra editar."""
@@ -359,13 +480,29 @@ def _preferencias(supabase):
     return padrao
 
 
+def _mes_atual():
+    return date.today().strftime("%Y-%m")
+
+
 def _mes_selecionado():
-    """Mes que o painel esta mostrando. Vem da URL, fica na sessao e cai
-    pro mes corrente quando nao ha nada escolhido."""
-    mes = request.args.get("mes")
-    if mes and len(mes) == 7:
-        session["mes"] = mes
-    return session.get("mes") or date.today().strftime("%Y-%m")
+    """Mes que o painel esta mostrando -- vem SEMPRE da URL.
+
+    Antes ficava guardado na sessao, e isso tornava o mes pegajoso: bastava
+    abrir um link de outro mes (o aviso de proxima fatura, por exemplo) pra
+    o app inteiro travar naquele mes, em todas as telas, sem voltar sozinho.
+    Quem abrisse o painel depois disso veria o mes errado e acharia que os
+    lancamentos novos sumiram. Com o mes na URL, abrir o app sempre cai no
+    mes corrente e o botao voltar funciona.
+    """
+    mes = request.args.get("mes") or ""
+    if len(mes) == 7 and mes[4] == "-":
+        try:
+            ano, numero = int(mes[:4]), int(mes[5:7])
+        except ValueError:
+            return _mes_atual()
+        if 2000 <= ano <= 2100 and 1 <= numero <= 12:
+            return mes
+    return _mes_atual()
 
 
 def _meses_disponiveis(transacoes):
@@ -399,13 +536,26 @@ def _contexto_base(supabase, tela, transacoes=None, preferencias=None):
     transacoes = _transacoes(supabase) if transacoes is None else transacoes
     preferencias = _preferencias(supabase) if preferencias is None else preferencias
     mes = _mes_selecionado()
+    mes_atual = _mes_atual()
     do_mes = _do_mes(transacoes, mes)
     titulo, subtitulo = TITULOS[tela]
+
+    # Data que o formulario de nova transacao ja vem preenchida: hoje quando
+    # o mes exibido e o corrente, senao o dia 1 do mes que esta na tela --
+    # senao o lancamento nasce fora do mes que o usuario esta olhando.
+    hoje = date.today()
+    data_padrao = hoje.isoformat() if mes == mes_atual else f"{mes}-01"
+
     return {
         "tela": tela,
         "titulo": titulo,
         "subtitulo": subtitulo,
         "mes": mes,
+        "mes_atual": mes_atual,
+        # Vai nos links de navegacao pra o mes escolhido acompanhar a troca
+        # de tela. None no mes corrente, pra URL ficar limpa.
+        "mes_url": None if mes == mes_atual else mes,
+        "outros_filtros": {k: v for k, v in request.args.items() if k != "mes"},
         "mes_rotulo": f"{MESES_PT[int(mes[5:7])]} {mes[:4]}",
         "meses": _meses_disponiveis(transacoes),
         "email": session.get("email"),
@@ -415,7 +565,7 @@ def _contexto_base(supabase, tela, transacoes=None, preferencias=None):
         "tipos_conta": TIPOS_CONTA,
         "cores": CORES,
         "nomes_contas": [c["nome"] for c in _contas(supabase)],
-        "hoje": date.today().isoformat(),
+        "hoje": data_padrao,
         "pendentes": sum(1 for t in do_mes if t.get("status") == "pendente"),
     }
 
@@ -488,18 +638,37 @@ def index(supabase):
     mes = _mes_selecionado()
     do_mes = _do_mes(transacoes, mes)
 
+    cartoes = {c["nome"] for c in contas if c.get("tipo") == "Cartão de crédito"}
+    no_cartao = lambda t: t.get("conta") in cartoes
+
     pagas = [t for t in do_mes if _e_despesa(t) and t.get("status") == "pago"]
     gasto = sum(_valor(t) for t in pagas)
     receita = sum(_valor(t) for t in do_mes if not _e_despesa(t) and t.get("status") == "pago")
-    pendente = sum(_valor(t) for t in do_mes if _e_despesa(t) and t.get("status") == "pendente")
+
+    # Conta pendente = boleto que sai da conta. O que esta no cartao nao
+    # entra aqui: ele e cobrado junto, na fatura.
+    pendente = sum(
+        _valor(t) for t in do_mes
+        if _e_despesa(t) and t.get("status") == "pendente" and not no_cartao(t)
+    )
+    qtd_pendentes = sum(
+        1 for t in do_mes if t.get("status") == "pendente" and not no_cartao(t)
+    )
 
     orcamento_total = sum(orcamentos.values())
     restante = orcamento_total - gasto
-    # Saldo = o que ha nas contas que nao sao cartao + o resultado do mes.
-    saldo_contas = sum(
-        float(c.get("saldo") or 0) for c in contas if c.get("tipo") != "Cartão de crédito"
-    )
-    saldo = saldo_contas + receita - gasto
+
+    # Saldo disponivel: compra no cartao NAO sai da conta na hora -- ela
+    # engorda a fatura, e o desconto acontece quando a fatura e paga.
+    # Descontar aqui contaria o mesmo gasto duas vezes.
+    registros_fatura = _faturas(supabase)
+    saldo = sum(_saldos(contas, transacoes, registros_fatura, mes).values())
+
+    faturas = _montar_faturas(transacoes, contas, registros_fatura, mes)
+    faturas_abertas = [f for f in faturas if f["status"] == "pendente" and f["valor"] > 0]
+    fatura_total = sum(f["valor"] for f in faturas_abertas)
+    # A proxima que vence manda no texto do card: e a informacao acionavel.
+    proxima = min(faturas_abertas, key=lambda f: f["vence"]) if faturas_abertas else None
 
     # Donut por categoria (so despesas pagas).
     por_categoria = defaultdict(float)
@@ -534,7 +703,12 @@ def index(supabase):
     contexto.update({
         "saldo": saldo, "gasto": gasto, "receita": receita, "pendente": pendente,
         "orcamento_total": orcamento_total, "restante": restante,
-        "qtd_pendentes": sum(1 for t in do_mes if t.get("status") == "pendente"),
+        "fatura_total": fatura_total,
+        "faturas_abertas": len(faturas_abertas),
+        "tem_cartao": any(c.get("tipo") == "Cartão de crédito" for c in contas),
+        "proxima_fatura": proxima,
+        "qtd_pendentes": qtd_pendentes,
+        "gasto_no_cartao": sum(_valor(t) for t in pagas if no_cartao(t)),
         "pct_orcamento": (gasto / orcamento_total * 100) if orcamento_total else 0,
         "pct_restante": (max(0, restante) / orcamento_total * 100) if orcamento_total else 0,
         "donut": donut, "lista_categorias": lista_categorias,
@@ -616,13 +790,28 @@ def salvar_transacao(supabase):
         flash("Transação atualizada.")
         return _voltar()
 
-    # Parcelado: divide o total e joga uma parcela por mes, marcando todas
-    # com o mesmo grupo_parcela pra dar pra achar a compra inteira depois.
+    novas = _parcelas(campos, nome, total, parcelas, data_base)
+    supabase.table("despesas").insert(novas).execute()
+
+    # "Repetir mensalmente" tambem cria a regra na tela de recorrentes.
+    if campos["recorrente"]:
+        supabase.table("recorrentes").insert({
+            "user_id": _uid(), "nome": nome,
+            "categoria": campos["categoria"] if campos["categoria"] != "Receita" else "Outros",
+            "valor": novas[0]["valor"], "dia": int(data_base[8:10]), "ativo": True,
+        }).execute()
+
+    flash(_confirmacao_lancamento(supabase, campos["conta"], data_base, parcelas))
+    return _voltar()
+
+
+def _parcelas(campos, nome, total, parcelas, data_base):
+    """Monta as linhas de uma compra parcelada: uma por mes, todas com o
+    mesmo grupo_parcela pra dar pra achar a compra inteira depois."""
     grupo = str(uuid.uuid4()) if parcelas > 1 else None
     valor_parcela = round(total / parcelas, 2)
-    novas = []
-    for i in range(parcelas):
-        novas.append({
+    return [
+        {
             **campos,
             "nome_despesa": f"{nome} ({i + 1}/{parcelas})" if parcelas > 1 else nome,
             "valor": valor_parcela,
@@ -631,19 +820,43 @@ def salvar_transacao(supabase):
             "grupo_parcela": grupo,
             "parcela_atual": (i + 1) if parcelas > 1 else None,
             "parcela_total": parcelas if parcelas > 1 else None,
-        })
-    supabase.table("despesas").insert(novas).execute()
+        }
+        for i in range(parcelas)
+    ]
 
-    # "Repetir mensalmente" tambem cria a regra na tela de recorrentes.
-    if campos["recorrente"]:
-        supabase.table("recorrentes").insert({
-            "user_id": _uid(), "nome": nome,
-            "categoria": campos["categoria"] if campos["categoria"] != "Receita" else "Outros",
-            "valor": valor_parcela, "dia": int(data_base[8:10]), "ativo": True,
-        }).execute()
 
-    flash(f"{parcelas} parcelas adicionadas." if parcelas > 1 else "Transação adicionada.")
-    return _voltar()
+def _confirmacao_lancamento(supabase, nome_conta, data_base, parcelas):
+    """Mensagem do lancamento, dizendo onde ele foi parar.
+
+    Duas coisas podem jogar o lancamento pra fora do mes que esta na tela:
+    a data escolhida e o fechamento do cartao. Nos dois casos ele some da
+    vista, e sem aviso parece que nao foi salvo."""
+    base = f"{parcelas} parcelas adicionadas." if parcelas > 1 else "Transação adicionada."
+    exibido = _mes_selecionado()
+    nome_mes = lambda m: MESES_PT[int(m[5:7])].lower()
+
+    cartao = next(
+        (c for c in _contas(supabase)
+         if c["nome"] == nome_conta and c.get("tipo") == "Cartão de crédito"),
+        None,
+    )
+
+    if cartao:
+        fechamento = int(cartao.get("fechamento") or 28)
+        mes_fatura = _mes_da_fatura(data_base, fechamento)
+        if mes_fatura != data_base[:7]:
+            return (
+                f"{base} A compra passou do fechamento (dia {fechamento}), "
+                f"então entrou na fatura de {nome_mes(mes_fatura)} do {nome_conta}."
+            )
+        return f"{base} Entrou na fatura de {nome_mes(mes_fatura)} do {nome_conta}."
+
+    if data_base[:7] != exibido:
+        return (
+            f"{base} A data é de {nome_mes(data_base[:7])}, "
+            f"mas você está vendo {nome_mes(exibido)} — por isso ela não aparece na lista."
+        )
+    return base
 
 
 @app.route("/transacao/deletar", methods=["POST"])
@@ -659,8 +872,12 @@ def _somar_meses(data_base, n):
     """Mesma data n meses a frente, encurtando o dia quando o mes destino
     for mais curto (31/01 + 1 mes -> 28 ou 29/02)."""
     if isinstance(data_base, str):
-        ano, mes, dia = (int(p) for p in data_base[:10].split("-"))
-        data_base = date(ano, mes, dia)
+        try:
+            ano, mes, dia = (int(p) for p in data_base[:10].split("-"))
+            data_base = date(ano, mes, dia)
+        except (ValueError, TypeError):
+            # Data invalida no banco nao pode derrubar a tela inteira.
+            data_base = date.today()
     mes = data_base.month - 1 + n
     ano = data_base.year + mes // 12
     mes = mes % 12 + 1
@@ -683,11 +900,26 @@ def _voltar():
 @com_supabase
 def contas(supabase):
     lista = _contas(supabase)
-    total = sum(float(c.get("saldo") or 0) for c in lista if c.get("tipo") != "Cartão de crédito")
-    faturas = sum(float(c.get("saldo") or 0) for c in lista if c.get("tipo") == "Cartão de crédito")
+    transacoes = _transacoes(supabase)
+    mes = _mes_selecionado()
+    registros = _faturas(supabase)
+    faturas = _montar_faturas(transacoes, lista, registros, mes)
 
-    contexto = _contexto_base(supabase, "accounts")
-    contexto.update({"contas": lista, "total": total, "faturas": faturas})
+    # Cartao nao guarda saldo: o que ele "tem" e a fatura em aberto.
+    por_conta = {f["conta"]["id"]: f for f in faturas}
+    saldos = _saldos(lista, transacoes, registros, mes)
+    carteiras = [
+        {**c, "saldo_atual": saldos.get(c["id"], 0)}
+        for c in lista if c.get("tipo") != "Cartão de crédito"
+    ]
+
+    contexto = _contexto_base(supabase, "accounts", transacoes)
+    contexto.update({
+        "contas": lista, "faturas": por_conta, "carteiras": carteiras,
+        "saldos": saldos,
+        "total": sum(saldos.values()),
+        "fatura_total": sum(f["valor"] for f in faturas if f["status"] == "pendente"),
+    })
     return render_template("contas.html", **contexto)
 
 
@@ -700,13 +932,20 @@ def salvar_conta(supabase):
         flash("Informe o nome da conta.")
         return _voltar()
 
+    tipo = request.form.get("tipo") or "Conta corrente"
     campos = {
         "nome": nome,
-        "tipo": request.form.get("tipo") or "Conta corrente",
-        "saldo": _numero(request.form.get("saldo")),
+        "tipo": tipo,
         "detalhe": (request.form.get("detalhe") or "").strip() or "Atualizado agora",
         "cor": request.form.get("cor") or "#22c55e",
     }
+    if tipo == "Cartão de crédito":
+        # Cartao nao tem saldo digitado -- a fatura vem dos lancamentos.
+        campos["saldo"] = 0
+        campos["fechamento"] = max(1, min(28, int(_numero(request.form.get("fechamento"), 28))))
+        campos["vencimento"] = max(1, min(28, int(_numero(request.form.get("vencimento"), 10))))
+    else:
+        campos["saldo"] = _numero(request.form.get("saldo"))
     if id_conta:
         supabase.table("contas").update(campos).eq("id", id_conta).eq("user_id", _uid()).execute()
         flash("Conta atualizada.")
@@ -721,6 +960,53 @@ def salvar_conta(supabase):
 def deletar_conta(supabase):
     supabase.table("contas").delete().eq("id", request.form["id"]).eq("user_id", _uid()).execute()
     flash("Conta excluída.")
+    return _voltar()
+
+
+# ------------------------------------------------------------------
+# Pagamento da fatura
+#
+# Pagar so mexe no saldo da conta de origem e marca a fatura. Nao cria
+# transacao: os itens do cartao ja foram lancados um a um, entao gerar
+# uma despesa "pagamento da fatura" contaria o mesmo gasto duas vezes.
+# ------------------------------------------------------------------
+
+@app.route("/fatura/pagar", methods=["POST"])
+@com_supabase
+def pagar_fatura(supabase):
+    id_cartao = int(request.form["conta_id"])
+    mes = request.form["mes"]
+    origem = request.form.get("pago_com")
+    valor = _numero(request.form.get("valor"))
+
+    if not origem:
+        flash("Escolha de qual conta o pagamento sai.")
+        return _voltar()
+    if valor <= 0:
+        flash("Esta fatura não tem valor a pagar.")
+        return _voltar()
+
+    # Só registra o pagamento: o desconto no saldo e calculado por _saldos,
+    # a partir de valor_pago e pago_em. Nada e gravado em contas.saldo.
+    supabase.table("faturas").upsert({
+        "user_id": _uid(), "conta_id": id_cartao, "mes": mes,
+        "status": "pago", "pago_com": int(origem),
+        "valor_pago": valor, "pago_em": date.today().isoformat(),
+    }, on_conflict="user_id,conta_id,mes").execute()
+
+    flash(f"Fatura de {brl(valor)} paga.")
+    return _voltar()
+
+
+@app.route("/fatura/reabrir", methods=["POST"])
+@com_supabase
+def reabrir_fatura(supabase):
+    supabase.table("faturas").update({
+        "status": "pendente", "pago_com": None, "valor_pago": None, "pago_em": None,
+    }).eq("user_id", _uid()).eq("conta_id", request.form["conta_id"]) \
+      .eq("mes", request.form["mes"]).execute()
+
+    flash("Fatura reaberta.")
     return _voltar()
 
 

@@ -11,7 +11,13 @@
       <div>
         <p>Saldo disponível</p>
         <strong class="kpi-value valor">{{ saldo|brl }}</strong>
-        <span>Contas + resultado do mês</span>
+        <span>
+          {% if gasto_no_cartao %}
+            Não inclui <span class="valor">{{ gasto_no_cartao|brl }}</span> no cartão
+          {% else %}
+            Contas e dinheiro, sem o cartão
+          {% endif %}
+        </span>
       </div>
       <div class="kpi-icon positive">{{ ic.carteira() }}</div>
     </article>
@@ -27,11 +33,20 @@
 
     <article class="surface kpi-card">
       <div>
-        <p>Orçamento restante</p>
-        <strong class="kpi-value valor {{ 'warning' if restante < 0 }}">{{ restante|brl }}</strong>
-        <span>{{ pct_restante|round|int }}% do orçamento total</span>
+        <p>Fatura do cartão</p>
+        <strong class="kpi-value valor {{ 'warning' if proxima_fatura and proxima_fatura.atrasada }}">{{ fatura_total|brl }}</strong>
+        <span>
+          {% if not tem_cartao %}
+            Nenhum cartão cadastrado
+          {% elif proxima_fatura %}
+            {{ 'Venceu' if proxima_fatura.atrasada else 'Vence' }} {{ proxima_fatura.vence_texto }}
+            · {{ proxima_fatura.conta.nome }}
+          {% else %}
+            Tudo pago em {{ mes_rotulo }}
+          {% endif %}
+        </span>
       </div>
-      <div class="kpi-icon positive">{{ ic.medidor() }}</div>
+      <div class="kpi-icon {{ 'warning' if faturas_abertas else 'positive' }}">{{ ic.cartao() }}</div>
     </article>
 
     <article class="surface kpi-card">
@@ -143,7 +158,7 @@
     <article class="surface recent-card">
       <div class="card-heading recent-heading">
         <div><h2>Últimas transações</h2><p>Movimentações mais recentes</p></div>
-        <a href="{{ url_for('transacoes') }}">Ver todas {{ ic.seta_direita() }}</a>
+        <a href="{{ url_for('transacoes', mes=mes_url) }}">Ver todas {{ ic.seta_direita() }}</a>
       </div>
       {% if recentes %}
         {{ tabela(recentes, compacta=True) }}

@@ -25,16 +25,18 @@
     </div>
 
     <nav class="sidebar-menu-list">
+      {# mes=mes_url mantém o mês escolhido ao trocar de tela; é None no
+         mês corrente, então a URL fica limpa. #}
       {% set itens = [
-        ("overview",     "Visão geral",           url_for('index'),          ic.painel()),
-        ("transactions", "Transações",            url_for('transacoes'),     ic.seta_baixo_esq()),
-        ("accounts",     "Contas e cartões",      url_for('contas'),         ic.cartao()),
-        ("budgets",      "Orçamentos",            url_for('orcamentos'),     ic.barras()),
-        ("recurring",    "Recorrentes",           url_for('recorrentes'),    ic.repetir()),
-        ("goals",        "Metas",                 url_for('metas'),          ic.alvo()),
-        ("reports",      "Relatórios",            url_for('relatorios'),     ic.relatorio()),
-        ("assistant",    "Assistente financeiro", url_for('assistente'),     ic.brilho()),
-        ("settings",     "Configurações",         url_for('configuracoes'),  ic.engrenagem()),
+        ("overview",     "Visão geral",           url_for('index', mes=mes_url),          ic.painel()),
+        ("transactions", "Transações",            url_for('transacoes', mes=mes_url),     ic.seta_baixo_esq()),
+        ("accounts",     "Contas e cartões",      url_for('contas', mes=mes_url),         ic.cartao()),
+        ("budgets",      "Orçamentos",            url_for('orcamentos', mes=mes_url),     ic.barras()),
+        ("recurring",    "Recorrentes",           url_for('recorrentes', mes=mes_url),    ic.repetir()),
+        ("goals",        "Metas",                 url_for('metas', mes=mes_url),          ic.alvo()),
+        ("reports",      "Relatórios",            url_for('relatorios', mes=mes_url),     ic.relatorio()),
+        ("assistant",    "Assistente financeiro", url_for('assistente', mes=mes_url),     ic.brilho()),
+        ("settings",     "Configurações",         url_for('configuracoes', mes=mes_url),  ic.engrenagem()),
       ] %}
       {% for chave, rotulo, destino, icone in itens %}
         <a class="sidebar-nav-button {{ 'active' if tela == chave }}" href="{{ destino }}"
@@ -56,8 +58,8 @@
         </summary>
         <div class="dark-menu left up" style="width:100%">
           <div class="menu-label">Minha conta</div>
-          <a href="{{ url_for('configuracoes') }}">{{ ic.usuario() }} Perfil</a>
-          <a href="{{ url_for('configuracoes') }}">{{ ic.escudo() }} Segurança</a>
+          <a href="{{ url_for('configuracoes', mes=mes_url) }}">{{ ic.usuario() }} Perfil</a>
+          <a href="{{ url_for('configuracoes', mes=mes_url) }}">{{ ic.escudo() }} Segurança</a>
           <div class="menu-separator"></div>
           <a class="destructive" href="{{ url_for('logout') }}">{{ ic.sair() }} Sair</a>
         </div>
@@ -79,6 +81,10 @@
       <div class="topbar-actions">
         {# Trocar o mês recarrega a tela atual com ?mes=... #}
         <form method="GET" id="form-mes">
+          {# Sem isso, trocar o mês em /transacoes apagaria busca e filtros. #}
+          {% for chave, valor in outros_filtros.items() %}
+            <input type="hidden" name="{{ chave }}" value="{{ valor }}">
+          {% endfor %}
           <select class="input period-selector" name="mes" aria-label="Período"
                   onchange="document.getElementById('form-mes').submit()">
             {% for m in meses %}
@@ -88,6 +94,7 @@
         </form>
 
         <form class="global-search" method="GET" action="{{ url_for('transacoes') }}" role="search">
+          {% if mes_url %}<input type="hidden" name="mes" value="{{ mes_url }}">{% endif %}
           {{ ic.busca() }}
           <input class="input" type="search" name="q" placeholder="Buscar transação, categoria..." aria-label="Buscar">
         </form>
@@ -102,10 +109,10 @@
           <div class="dark-menu notification-menu">
             <div class="menu-label">Notificações</div>
             <div class="menu-separator"></div>
-            <a href="{{ url_for('transacoes', status='pendente') }}">
+            <a href="{{ url_for('transacoes', status='pendente', mes=mes_url) }}">
               {{ ic.recibo() }}<span><strong>{{ pendentes }} conta{{ 's' if pendentes != 1 }} pendente{{ 's' if pendentes != 1 }}</strong><small>Confira os próximos vencimentos</small></span>
             </a>
-            <a href="{{ url_for('metas') }}">
+            <a href="{{ url_for('metas', mes=mes_url) }}">
               {{ ic.alvo() }}<span><strong>Metas em andamento</strong><small>Acompanhe seu progresso</small></span>
             </a>
           </div>
@@ -123,11 +130,11 @@
 
     {# ---------------- Navegação mobile ---------------- #}
     <nav class="mobile-bottom-nav">
-      <a class="{{ 'active' if tela == 'overview' }}" href="{{ url_for('index') }}">{{ ic.casa() }}<span>Início</span></a>
-      <a class="{{ 'active' if tela == 'transactions' }}" href="{{ url_for('transacoes') }}">{{ ic.recibo() }}<span>Transações</span></a>
+      <a class="{{ 'active' if tela == 'overview' }}" href="{{ url_for('index', mes=mes_url) }}">{{ ic.casa() }}<span>Início</span></a>
+      <a class="{{ 'active' if tela == 'transactions' }}" href="{{ url_for('transacoes', mes=mes_url) }}">{{ ic.recibo() }}<span>Transações</span></a>
       <button class="mobile-add" data-abrir="modal-transacao" aria-label="Nova transação">{{ ic.mais() }}<span>Novo</span></button>
-      <a class="{{ 'active' if tela == 'budgets' }}" href="{{ url_for('orcamentos') }}">{{ ic.barras() }}<span>Orçamentos</span></a>
-      <a class="{{ 'active' if tela == 'settings' }}" href="{{ url_for('configuracoes') }}">{{ ic.usuario() }}<span>Perfil</span></a>
+      <a class="{{ 'active' if tela == 'budgets' }}" href="{{ url_for('orcamentos', mes=mes_url) }}">{{ ic.barras() }}<span>Orçamentos</span></a>
+      <a class="{{ 'active' if tela == 'settings' }}" href="{{ url_for('configuracoes', mes=mes_url) }}">{{ ic.usuario() }}<span>Perfil</span></a>
     </nav>
   </div>
 </div>
@@ -194,6 +201,7 @@
         {% for n in [1, 2, 3, 4, 5, 6, 10, 12] %}<option value="{{ n }}">{{ n }}x</option>{% endfor %}
       </select>
     </label>
+
 
     <label class="field field-span-2">
       <span>Observações</span>

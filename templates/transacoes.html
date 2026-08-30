@@ -17,7 +17,7 @@
                  onchange="document.getElementById('form-importar').submit()">
           <button type="button" class="btn" onclick="document.getElementById('arquivo-csv').click()">{{ ic.enviar_arquivo() }} Importar</button>
         </form>
-        <a class="btn" href="{{ url_for('exportar_csv') }}">{{ ic.baixar() }} Exportar</a>
+        <a class="btn" href="{{ url_for('exportar_csv', mes=mes_url) }}">{{ ic.baixar() }} Exportar</a>
       </div>
     </div>
 

@@ -72,7 +72,7 @@
       <button type="button" data-sugestao="Qual meta devo priorizar?">Qual meta priorizar?</button>
     </div>
 
-    <form class="chat-input" method="POST" action="{{ url_for('assistente') }}">
+    <form class="chat-input" method="POST" action="{{ url_for('assistente', mes=mes_url) }}">
       <input class="input" name="pergunta" id="pergunta" required
              placeholder="Pergunte sobre suas finanças..." autocomplete="off">
       <button class="btn btn-icon" type="submit" aria-label="Enviar">{{ ic.enviar() }}</button>

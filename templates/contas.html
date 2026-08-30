@@ -6,10 +6,12 @@
 
   <section class="accounts-grid">
     {% for c in contas %}
-    <article class="surface account-card">
+    {% set cartao = c.tipo == 'Cartão de crédito' %}
+    {% set f = faturas.get(c.id) if cartao else None %}
+    <article class="surface account-card {{ 'cartao' if cartao }}">
       <div class="account-card-top">
         <span style="color:{{ c.cor }};background:{{ c.cor }}13">
-          {% if c.tipo == 'Cartão de crédito' %}{{ ic.cartao() }}
+          {% if cartao %}{{ ic.cartao() }}
           {% elif c.tipo == 'Dinheiro' %}{{ ic.carteira() }}
           {% else %}{{ ic.banco() }}{% endif %}
         </span>
@@ -19,19 +21,60 @@
             <button type="button" data-editar-conta
                     data-id="{{ c.id }}" data-nome="{{ c.nome }}" data-tipo="{{ c.tipo }}"
                     data-saldo="{{ '%.2f'|format(c.saldo|float) }}" data-detalhe="{{ c.detalhe or '' }}"
-                    data-cor="{{ c.cor }}">{{ ic.lapis() }} Editar</button>
+                    data-cor="{{ c.cor }}" data-fechamento="{{ c.fechamento or 28 }}"
+                    data-vencimento="{{ c.vencimento or 10 }}">{{ ic.lapis() }} Editar</button>
+            {% if cartao and f and f.status == 'pago' %}
+            <button type="button" data-reabrir data-id="{{ c.id }}" data-mes="{{ mes }}"
+                    data-nome="{{ c.nome }}">{{ ic.repetir() }} Reabrir fatura</button>
+            {% endif %}
             <div class="menu-separator"></div>
             <button type="button" class="destructive" data-excluir
                     data-acao="{{ url_for('deletar_conta') }}" data-campo="id" data-id="{{ c.id }}"
-                    data-titulo="Excluir esta conta?"
-                    data-texto="“{{ c.nome }}” será removida. As transações já lançadas continuam no histórico.">{{ ic.lixeira() }} Excluir</button>
+                    data-titulo="Excluir {{ 'este cartão' if cartao else 'esta conta' }}?"
+                    data-texto="“{{ c.nome }}” será removid{{ 'o' if cartao else 'a' }}. As transações já lançadas continuam no histórico.">{{ ic.lixeira() }} Excluir</button>
           </div>
         </details>
       </div>
+
       <p>{{ c.tipo }}</p>
       <h3>{{ c.nome }}</h3>
-      <strong class="valor">{{ c.saldo|brl }}</strong>
-      <small>{{ c.detalhe }}</small>
+
+      {% if cartao %}
+        <strong class="valor">{{ f.valor|brl }}</strong>
+        <div class="fatura-meta">
+          <span class="status {{ 'pago' if f.status == 'pago' else ('atrasada' if f.atrasada else 'pendente') }}">
+            {% if f.status == 'pago' %}Fatura paga
+            {% elif f.atrasada %}Venceu {{ f.vence_texto }}
+            {% else %}Vence {{ f.vence_texto }}{% endif %}
+          </span>
+          <small>{{ f.itens }} lançamento{{ 's' if f.itens != 1 }} · fecha dia {{ f.fechamento }}</small>
+        </div>
+
+        {% if f.proximo_valor %}
+          {# Sem isso a compra feita depois do fechamento "some" da tela. #}
+          <a class="proximo-ciclo" href="{{ url_for('contas', mes=f.proximo_mes) }}">
+            {{ ic.seta_direita() }}
+            <span>Já na próxima fatura: <strong class="valor">{{ f.proximo_valor|brl }}</strong>
+            <small>{{ f.proximo_itens }} lançamento{{ 's' if f.proximo_itens != 1 }} após o fechamento</small></span>
+          </a>
+        {% endif %}
+
+        {% if f.status == 'pago' %}
+          <small class="fatura-origem">{{ ic.check() }} Pago com {{ f.pago_com_nome }}</small>
+        {% elif f.valor > 0 %}
+          <button class="btn primary-button fatura-botao" data-pagar-fatura
+                  data-id="{{ c.id }}" data-nome="{{ c.nome }}" data-mes="{{ mes }}"
+                  data-valor="{{ '%.2f'|format(f.valor) }}"
+                  data-valor-texto="{{ f.valor|brl }}"
+                  data-vence="{{ f.vence_texto }}">Pagar fatura</button>
+        {% elif not f.proximo_valor %}
+          <small class="fatura-origem vazia">Nenhum gasto neste ciclo</small>
+        {% endif %}
+      {% else %}
+        {# Saldo calculado: cadastro + entradas − saídas − faturas pagas no mês. #}
+        <strong class="valor">{{ saldos.get(c.id, c.saldo)|brl }}</strong>
+        <small>{{ c.detalhe }}</small>
+      {% endif %}
     </article>
     {% endfor %}
 
@@ -48,7 +91,7 @@
     </div>
     <div class="account-summary-grid">
       <div><span>Saldo total</span><strong class="valor">{{ total|brl }}</strong></div>
-      <div><span>Faturas atuais</span><strong class="negative valor">{{ faturas|brl }}</strong></div>
+      <div><span>Faturas em aberto</span><strong class="negative valor">{{ fatura_total|brl }}</strong></div>
       <div><span>Contas conectadas</span><strong>{{ contas|length }}</strong></div>
     </div>
   </section>
@@ -72,18 +115,36 @@
       <input class="input" name="nome" id="conta-nome" required placeholder="Ex.: Banco principal">
     </label>
 
-    <div class="form-grid">
+    <label class="field">
+      <span>Tipo</span>
+      <select class="input" name="tipo" id="conta-tipo">
+        {% for t in tipos_conta %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+      </select>
+    </label>
+
+    {# Conta e dinheiro têm saldo inicial digitado; cartão não — a fatura é calculada. #}
+    <label class="field" id="campo-saldo">
+      <span>Saldo inicial</span>
+      <input class="input" name="saldo" id="conta-saldo" inputmode="decimal" placeholder="0,00">
+      <small class="ajuda">Ponto de partida. As transações lançadas nesta conta são somadas e subtraídas em cima dele.</small>
+    </label>
+
+    <div class="form-grid" id="campo-ciclo" hidden>
       <label class="field">
-        <span>Tipo</span>
-        <select class="input" name="tipo" id="conta-tipo">
-          {% for t in tipos_conta %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-        </select>
+        <span>Fecha dia</span>
+        <input class="input" type="number" name="fechamento" id="conta-fechamento" min="1" max="28" value="28">
       </label>
       <label class="field">
-        <span id="rotulo-saldo">Saldo</span>
-        <input class="input" name="saldo" id="conta-saldo" inputmode="decimal" placeholder="0,00">
+        <span>Vence dia</span>
+        <input class="input" type="number" name="vencimento" id="conta-vencimento" min="1" max="28" value="10">
       </label>
     </div>
+
+    <p class="dica" id="dica-cartao" hidden>
+      {{ ic.cartao() }}
+      <span>O valor da fatura não é digitado: ele soma o que você lançar neste cartão.
+      Compras depois do fechamento entram na fatura do mês seguinte.</span>
+    </p>
 
     <label class="field">
       <span>Detalhes</span>
@@ -107,4 +168,56 @@
     </div>
   </form>
 </dialog>
+
+{# ---------------- Pagar fatura ---------------- #}
+<dialog class="modal narrow" id="modal-fatura">
+  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
+  <div class="modal-header">
+    <h2>Pagar fatura</h2>
+    <p><span id="fatura-nome"></span> · vence <span id="fatura-vence"></span></p>
+  </div>
+  <form class="simple-form" method="POST" action="{{ url_for('pagar_fatura') }}">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <input type="hidden" name="conta_id" id="fatura-conta-id">
+    <input type="hidden" name="mes" id="fatura-mes">
+    <input type="hidden" name="valor" id="fatura-valor">
+
+    <div class="fatura-resumo">
+      <span>Total da fatura</span>
+      <strong id="fatura-total"></strong>
+    </div>
+
+    <label class="field">
+      <span>Descontar de</span>
+      {% if carteiras %}
+      <select class="input" name="pago_com" id="fatura-origem" required>
+        {% for c in carteiras %}
+          <option value="{{ c.id }}" data-saldo="{{ '%.2f'|format(c.saldo_atual|float) }}">
+            {{ c.nome }} — {{ c.saldo_atual|brl }}
+          </option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <span class="aviso-inline">Cadastre uma conta corrente ou dinheiro para poder pagar.</span>
+      {% endif %}
+    </label>
+
+    <p class="dica" id="dica-saldo" hidden>
+      {{ ic.raio() }}<span>O saldo desta conta não cobre a fatura inteira. O pagamento vai deixá-la negativa.</span>
+    </p>
+
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn primary-button" {{ 'disabled' if not carteiras }}>
+        {{ ic.check() }} Confirmar pagamento
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<form method="POST" action="{{ url_for('reabrir_fatura') }}" id="form-reabrir" hidden>
+  <input type="hidden" name="origem" value="{{ request.full_path }}">
+  <input type="hidden" name="conta_id" id="reabrir-conta-id">
+  <input type="hidden" name="mes" id="reabrir-mes">
+</form>
 {% endblock %}
