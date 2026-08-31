@@ -44,6 +44,9 @@
         <div class="fatura-meta">
           <span class="status {{ 'pago' if f.status == 'pago' else ('atrasada' if f.atrasada else 'pendente') }}">
             {% if f.status == 'pago' %}Fatura paga
+            {% elif f.parcial %}Falta {{ f.restante|brl }}
+            {% elif not f.fechada %}Em aberto
+            {% elif not f.valor %}Sem gastos
             {% elif f.atrasada %}Venceu {{ f.vence_texto }}
             {% else %}Vence {{ f.vence_texto }}{% endif %}
           </span>
@@ -51,22 +54,36 @@
         </div>
 
         {% if f.proximo_valor %}
-          {# Sem isso a compra feita depois do fechamento "some" da tela. #}
-          <a class="proximo-ciclo" href="{{ url_for('contas', mes=f.proximo_mes) }}">
-            {{ ic.seta_direita() }}
+          {# Só informa onde a compra pós-fechamento foi parar; quem paga
+             aquela fatura é o card dela, no mês correspondente. #}
+          <div class="proximo-ciclo">
+            {{ ic.repetir() }}
             <span>Já na próxima fatura: <strong class="valor">{{ f.proximo_valor|brl }}</strong>
             <small>{{ f.proximo_itens }} lançamento{{ 's' if f.proximo_itens != 1 }} após o fechamento</small></span>
-          </a>
+          </div>
         {% endif %}
 
         {% if f.status == 'pago' %}
           <small class="fatura-origem">{{ ic.check() }} Pago com {{ f.pago_com_nome }}</small>
-        {% elif f.valor > 0 %}
+        {% elif f.restante > 0 %}
+          {% if f.parcial %}
+            <small class="fatura-origem aberta">
+              {{ ic.check() }} {{ f.pago_valor|brl }} já pagos · falta {{ f.restante|brl }}
+            </small>
+          {% endif %}
+          {# Estando no mês da fatura dá para pagar, mesmo antes do
+             fechamento; o aviso deixa claro que o valor ainda pode subir. #}
+          {% if not f.fechada %}
+            <small class="fatura-origem aberta">{{ ic.calendario() }} Ainda aberta · fecha {{ f.fecha_texto }}</small>
+          {% endif %}
           <button class="btn primary-button fatura-botao" data-pagar-fatura
                   data-id="{{ c.id }}" data-nome="{{ c.nome }}" data-mes="{{ mes }}"
-                  data-valor="{{ '%.2f'|format(f.valor) }}"
-                  data-valor-texto="{{ f.valor|brl }}"
-                  data-vence="{{ f.vence_texto }}">Pagar fatura</button>
+                  data-valor="{{ '%.2f'|format(f.restante) }}"
+                  data-valor-texto="{{ f.restante|brl }}"
+                  data-parcial="{{ '1' if f.parcial else '' }}"
+                  data-aberta="{{ '1' if not f.fechada else '' }}"
+                  data-fecha="{{ f.fecha_texto }}"
+                  data-vence="{{ f.vence_texto }}">{{ 'Pagar diferença' if f.parcial else 'Pagar fatura' }}</button>
         {% elif not f.proximo_valor %}
           <small class="fatura-origem vazia">Nenhum gasto neste ciclo</small>
         {% endif %}
@@ -183,7 +200,7 @@
     <input type="hidden" name="valor" id="fatura-valor">
 
     <div class="fatura-resumo">
-      <span>Total da fatura</span>
+      <span id="fatura-rotulo">Total da fatura</span>
       <strong id="fatura-total"></strong>
     </div>
 
@@ -201,6 +218,12 @@
       <span class="aviso-inline">Cadastre uma conta corrente ou dinheiro para poder pagar.</span>
       {% endif %}
     </label>
+
+    <p class="dica" id="dica-fatura-aberta" hidden>
+      {{ ic.calendario() }}
+      <span>Esta fatura <strong>ainda não fechou</strong> (fecha <span id="fatura-fecha"></span>).
+      Compras feitas até lá entram nela e o valor vai subir — você pode pagar a diferença depois.</span>
+    </p>
 
     <p class="dica" id="dica-saldo" hidden>
       {{ ic.raio() }}<span>O saldo desta conta não cobre a fatura inteira. O pagamento vai deixá-la negativa.</span>

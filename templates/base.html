@@ -174,16 +174,21 @@
 
     <label class="field">
       <span>Categoria</span>
+      {# Marcadas por tipo: o JS reconstrói a lista conforme Despesa/Receita. #}
       <select class="input" name="categoria" id="campo-categoria">
-        {% for c in categorias %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        {% for c in categorias %}
+          <option value="{{ c }}" {{ 'data-receita=1'|safe if c == 'Receita' }}>{{ c }}</option>
+        {% endfor %}
       </select>
     </label>
 
     <label class="field">
-      <span>Conta ou cartão</span>
+      <span id="rotulo-conta">Conta ou cartão</span>
       <select class="input" name="conta" id="campo-conta">
-        {% if not nomes_contas %}<option value="">Nenhuma conta cadastrada</option>{% endif %}
-        {% for n in nomes_contas %}<option value="{{ n }}">{{ n }}</option>{% endfor %}
+        {% if not contas_modal %}<option value="">Nenhuma conta cadastrada</option>{% endif %}
+        {% for c in contas_modal %}
+          <option value="{{ c.nome }}" {{ 'data-cartao=1'|safe if c.cartao }}>{{ c.nome }}</option>
+        {% endfor %}
       </select>
     </label>
 
@@ -209,7 +214,7 @@
     </label>
 
     <label class="recurring-option field-span-2">
-      <span>{{ ic.repetir() }}<span><strong>Repetir mensalmente</strong><small>Cria uma regra em despesas recorrentes</small></span></span>
+      <span>{{ ic.repetir() }}<span><strong>Repetir mensalmente</strong><small id="texto-recorrente">Cria uma regra em despesas recorrentes</small></span></span>
       <span class="switch"><input type="checkbox" name="recorrente" id="campo-recorrente"><span></span></span>
     </label>
 

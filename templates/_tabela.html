@@ -36,7 +36,17 @@
         {% set cor = cores.get(t.categoria, '#64748b') %}
         <span class="category-badge" style="color:{{ cor }};border-color:{{ cor }}55;background:{{ cor }}12">{{ t.categoria or 'Outros' }}</span>
       </td>
-      {% if not compacta %}<td data-slot="table-cell" class="muted-cell">{{ t.conta or '—' }}</td>{% endif %}
+      {% if not compacta %}
+      <td data-slot="table-cell" class="muted-cell">
+        {% if t.conta_orfa %}
+          <span class="conta-orfa" title="Esta conta não existe mais. Edite a transação e escolha a conta ou cartão correto — enquanto isso ela conta como gasto imediato.">
+            {{ ic.raio() }}{{ t.conta }}
+          </span>
+        {% else %}
+          {{ t.conta or '—' }}
+        {% endif %}
+      </td>
+      {% endif %}
       <td data-slot="table-cell" class="muted-cell">{{ t.data|data_curta }}</td>
       {% if not compacta %}
         <td data-slot="table-cell"><span class="status {{ t.status or 'pago' }}">{{ 'Pendente' if t.status == 'pendente' else 'Pago' }}</span></td>
@@ -64,8 +74,15 @@
                     data-acao="{{ url_for('deletar_transacao') }}"
                     data-campo="id_despesa"
                     data-id="{{ t.id }}"
+                    {# Parcelada apaga a compra toda, inclusive os meses à
+                       frente — o texto precisa dizer isso antes. #}
+                    {% if t.grupo_parcela %}
+                    data-titulo="Excluir a compra parcelada?"
+                    data-texto="“{{ t.nome_despesa|replace(' (' ~ t.parcela_atual ~ '/' ~ t.parcela_total ~ ')', '') }}” será removida em todos os meses{{ ' — as ' ~ t.parcela_total ~ ' parcelas' if t.parcela_total }}."
+                    {% else %}
                     data-titulo="Excluir esta transação?"
-                    data-texto="“{{ t.nome_despesa }}” será removida permanentemente.">{{ ic.lixeira() }} Excluir</button>
+                    data-texto="“{{ t.nome_despesa }}” será removida permanentemente."
+                    {% endif %}>{{ ic.lixeira() }} Excluir</button>
           </div>
         </details>
       </td>

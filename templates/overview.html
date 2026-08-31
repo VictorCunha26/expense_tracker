@@ -2,29 +2,6 @@
 {% import "icones.html" as ic %}
 {% from "_tabela.html" import tabela with context %}
 
-{% block modais %}
-<dialog class="modal narrow" id="modal-limite">
-  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
-  <div class="modal-header">
-    <h2>Limite de gastos do mês</h2>
-    <p>Quanto você quer gastar, no total, por mês.</p>
-  </div>
-  <form class="simple-form" method="POST" action="{{ url_for('salvar_limite') }}">
-    <input type="hidden" name="origem" value="{{ request.full_path }}">
-    <label class="field">
-      <span>Valor ideal</span>
-      <input class="input" name="limite" id="limite-valor" inputmode="decimal" placeholder="0,00">
-      <small class="ajuda">Deixe em branco para voltar a somar os limites por categoria
-      (hoje isso daria {{ orcamento_total|brl }}).</small>
-    </label>
-    <div class="modal-footer">
-      <button type="button" class="btn" data-fechar>Cancelar</button>
-      <button type="submit" class="btn primary-button">Salvar limite</button>
-    </div>
-  </form>
-</dialog>
-{% endblock %}
-
 {% block conteudo %}
 <div class="view-stack">
 
@@ -34,13 +11,7 @@
       <div>
         <p>Saldo disponível</p>
         <strong class="kpi-value valor">{{ saldo|brl }}</strong>
-        <span>
-          {% if gasto_no_cartao %}
-            Não inclui <span class="valor">{{ gasto_no_cartao|brl }}</span> no cartão
-          {% else %}
-            Contas e dinheiro, sem o cartão
-          {% endif %}
-        </span>
+        <span>Contas e dinheiro, sem o cartão</span>
       </div>
       <div class="kpi-icon positive">{{ ic.carteira() }}</div>
     </article>
@@ -49,7 +20,13 @@
       <div>
         <p>Gastos no mês</p>
         <strong class="kpi-value valor">{{ gasto|brl }}</strong>
-        <span>{{ mes_rotulo }}</span>
+        <span>
+          {% if aguardando_fatura %}
+            + <span class="valor">{{ aguardando_fatura|brl }}</span> no cartão, ao pagar a fatura
+          {% else %}
+            {{ mes_rotulo }}
+          {% endif %}
+        </span>
       </div>
       <div class="kpi-icon neutral">{{ ic.tendencia_baixo() }}</div>
     </article>
@@ -159,47 +136,22 @@
 
   {# ---------------- Orçamento + últimas transações ---------------- #}
   <section class="bottom-grid">
-    {# .estourado pinta o card inteiro de vermelho quando passa do limite. #}
-    <article class="surface budget-card {{ 'estourado' if estourou }}">
+    <article class="surface budget-card">
       <div class="card-heading">
-        <div>
-          <h2>Orçamento mensal</h2>
-          <p>{{ 'Seu limite de gastos' if limite_proprio else 'Soma dos limites por categoria' }}</p>
-        </div>
-        <strong class="{{ 'negative' if estourou else 'positive' }}">{{ pct_orcamento|round|int }}% utilizado</strong>
+        <div><h2>Orçamento mensal</h2><p>Limite total definido</p></div>
+        <strong class="{{ 'negative' if pct_orcamento > 100 else 'positive' }}">{{ pct_orcamento|round|int }}% utilizado</strong>
       </div>
-
-      <p class="budget-total">
-        <strong class="valor">{{ gasto|brl }}</strong> de <span class="valor">{{ orcamento_total|brl }}</span>
-        <button type="button" class="btn btn-ghost btn-icon editar-limite" data-editar-limite
-                data-limite="{{ '%.2f'|format(orcamento_total) }}"
-                aria-label="Definir limite mensal">{{ ic.lapis() }}</button>
-      </p>
-
-      <div class="progress budget-progress
-                  {{ 'over-progress' if estourou else ('danger-progress' if pct_orcamento > 85) }}">
+      <p class="budget-total"><strong class="valor">{{ gasto|brl }}</strong> de <span class="valor">{{ orcamento_total|brl }}</span></p>
+      <div class="progress budget-progress {{ 'danger-progress' if pct_orcamento > 85 }}">
         <div style="width:{{ [pct_orcamento, 100]|min }}%"></div>
       </div>
       <div class="budget-scale"><span>R$ 0</span><span>50%</span><span>100%</span></div>
-
-      <div class="insight-box {{ 'estourado' if estourou }}">
-        <span>{{ ic.raio() if estourou else ic.tendencia_cima() }}</span>
-        {% if estourou %}
+      <div class="insight-box">
+        <span>{{ ic.tendencia_cima() }}</span>
         <p>
-          Você passou <strong class="valor">{{ excedente|brl }}</strong> do seu limite.
-          <small>Gastou {{ gasto|brl }} de {{ orcamento_total|brl }} planejados.</small>
+          Você ainda pode gastar <strong class="valor">{{ [restante, 0]|max|brl }}</strong> neste período.
+          <small>{{ 'Mantenha o bom controle!' if restante >= 0 else 'Seu limite foi ultrapassado.' }}</small>
         </p>
-        {% elif orcamento_total %}
-        <p>
-          Você ainda pode gastar <strong class="valor">{{ restante|brl }}</strong> neste período.
-          <small>Mantenha o bom controle!</small>
-        </p>
-        {% else %}
-        <p>
-          Defina quanto quer gastar por mês.
-          <small>Clique no lápis ao lado do valor para começar.</small>
-        </p>
-        {% endif %}
       </div>
     </article>
 

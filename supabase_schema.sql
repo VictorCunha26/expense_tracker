@@ -75,6 +75,14 @@ create table if not exists public.faturas (
 
 create index if not exists faturas_user_idx on public.faturas (user_id, mes);
 
+-- O pagamento da fatura vira uma transacao visivel em Transacoes. Este
+-- vinculo marca essa linha como quitacao (nao gasto novo) e permite
+-- desfaze-la junto quando a fatura e reaberta.
+alter table public.despesas add column if not exists fatura_id bigint
+  references public.faturas (id) on delete cascade;
+
+create index if not exists despesas_fatura_idx on public.despesas (fatura_id);
+
 
 -- ------------------------------------------------------------
 -- 4) orcamentos (limite mensal por categoria)
@@ -108,6 +116,21 @@ create index if not exists recorrentes_user_idx on public.recorrentes (user_id);
 -- ao campo 'conta' de despesas, pra os dois falarem a mesma lingua.
 alter table public.recorrentes add column if not exists conta text;
 
+-- Recorrencia tambem pode ser entrada (salario, aluguel recebido), nao so
+-- cobranca. Sem isso, uma receita recorrente apareceria como despesa.
+alter table public.recorrentes add column if not exists tipo text not null default 'despesa';
+
+do $$ begin
+  alter table public.recorrentes add constraint recorrentes_tipo_check check (tipo in ('despesa', 'receita'));
+exception when duplicate_object then null; end $$;
+
+-- Liga a despesa a regra que a gerou. E o que impede a mesma recorrencia
+-- de ser lancada duas vezes no mesmo mes.
+alter table public.despesas add column if not exists recorrente_id bigint
+  references public.recorrentes (id) on delete set null;
+
+create index if not exists despesas_recorrente_idx on public.despesas (recorrente_id);
+
 
 -- ------------------------------------------------------------
 -- 6) metas (objetivos financeiros)
@@ -137,11 +160,6 @@ create table if not exists public.preferencias (
   resumo_semanal boolean not null default true,
   onboarding     boolean not null default false
 );
-
--- Quanto a pessoa quer gastar por mes, no total. Fica separado dos limites
--- por categoria: e o alvo que ela mesma define. Nulo = usa a soma das
--- categorias, que era o comportamento anterior.
-alter table public.preferencias add column if not exists limite_mensal numeric;
 
 
 -- ============================================================

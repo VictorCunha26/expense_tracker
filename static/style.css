@@ -22,6 +22,10 @@
 }
 
 * { box-sizing: border-box; border-color: var(--border); }
+/* O [hidden] do navegador tem especificidade quase zero: qualquer regra de
+   classe com display (.field, .dica, .form-grid) o anula e o elemento
+   reaparece. Este !important faz o atributo valer de verdade. */
+[hidden] { display: none !important; }
 html { background: #050607; color-scheme: dark; }
 body {
   margin: 0; min-width: 320px; background: #050607; color: #f4f5f6;
@@ -98,9 +102,6 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .progress > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #11933f, #22c55e); transition: width .5s cubic-bezier(.2,.8,.2,1); }
 .budget-progress, .category-progress, .goal-progress { height: 9px; background: #202429; }
 .danger-progress > div { background: linear-gradient(90deg, #d97706, #f59e0b); }
-/* Estourou o limite: vermelho, não só o âmbar de "chegando perto". */
-.over-progress { background: #2a1618; }
-.over-progress > div { background: linear-gradient(90deg, #b91c1c, #ef4444); }
 
 .positive { color: #22c55e !important; }
 .negative { color: #ef4444 !important; }
@@ -267,16 +268,6 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .insight-box p { margin: 0; color: #a1a7ae; font-size: 11px; line-height: 1.55; }
 .insight-box p strong { color: #22c55e; }
 
-/* Card de orçamento estourado */
-.budget-card.estourado { border-color: #4a2226; background: linear-gradient(145deg, #120c0d 0%, #0b0809 100%); }
-.budget-card.estourado:hover { border-color: #5d2a2e; }
-.budget-card.estourado .budget-total strong { color: #f4595f; }
-.insight-box.estourado { border-color: #45201f; background: #130c0c; }
-.insight-box.estourado > span { color: #f0625c; background: #2a1312; }
-.insight-box.estourado p strong { color: #f4595f; }
-.editar-limite { width: 26px !important; height: 26px !important; margin-left: 6px; vertical-align: middle; color: #69717a; }
-.editar-limite svg { width: 13px; height: 13px; }
-.editar-limite:hover { color: #cdd2d7; }
 .insight-box small { display: block; color: #6c747c; }
 
 .recent-card { overflow: hidden; }
@@ -352,8 +343,9 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .fatura-origem { display: flex; align-items: center; gap: 6px; margin-top: auto; padding-top: 13px; color: #35cc67; font-size: 10px; }
 .fatura-origem svg { width: 13px; flex: 0 0 13px; }
 .fatura-origem.vazia { color: #5b636c; }
+.fatura-origem.aberta { color: #8a9199; }
+.fatura-origem.aberta svg { color: #8a9199; }
 .proximo-ciclo { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; padding: 9px 11px; border: 1px solid #24292e; border-radius: 9px; background: #080a0c; color: #99a0a8; font-size: 10px; line-height: 1.45; transition: 150ms ease; }
-.proximo-ciclo:hover { border-color: #2f6640; background: #0a110d; color: #cdd2d7; }
 .proximo-ciclo svg { width: 13px; height: 13px; flex: 0 0 13px; margin-top: 2px; color: #35cc67; }
 .proximo-ciclo strong { color: #e2e5e7; }
 .proximo-ciclo small { display: block; margin-top: 2px; color: #656d76; font-size: 9px; }
@@ -809,3 +801,7 @@ dialog.modal.narrow { width: min(440px, calc(100% - 32px)); }
 }
 
 .ajuda { color: #626a73; font-size: 9px; line-height: 1.5; }
+
+/* Transação apontando para conta que não existe mais */
+.conta-orfa { display: inline-flex; align-items: center; gap: 5px; color: #c98b3f; cursor: help; }
+.conta-orfa svg { width: 12px; height: 12px; flex: 0 0 12px; }

@@ -5,7 +5,10 @@
 <div class="view-stack">
   <section class="surface recurring-panel">
     <div class="panel-title-row">
-      <div><h2>Despesas recorrentes</h2><p>Ative, pause ou adicione cobranças automáticas</p></div>
+      <div>
+        <h2>Lançamentos recorrentes</h2>
+        <p>Entram sozinhos em Transações quando o dia chega. Pausar interrompe sem apagar o histórico.</p>
+      </div>
       <button class="btn primary-button" data-abrir="modal-recorrente">{{ ic.mais() }} Nova recorrência</button>
     </div>
 
@@ -29,10 +32,18 @@
           {% endif %}
         </div>
         <div>
-          <span>Próximo lançamento</span>
-          <strong>{{ r.proximo }}</strong>
+          {% if not r.ativo %}
+            <span>Pausada</span>
+            <strong class="muted-cell">não lança</strong>
+          {% elif r.lancada %}
+            <span>Neste mês</span>
+            <strong class="positive">já lançada</strong>
+          {% else %}
+            <span>Próximo lançamento</span>
+            <strong>{{ r.proximo }}</strong>
+          {% endif %}
         </div>
-        <strong class="valor">{{ r.valor|brl }}</strong>
+        <strong class="valor {{ 'positive' if r.receita }}">{{ '+ ' if r.receita }}{{ r.valor|brl }}</strong>
         <div class="row-actions">
           {# O switch envia sozinho: alternar já é a confirmação. #}
           <form method="POST" action="{{ url_for('alternar_recorrente') }}">
@@ -58,7 +69,7 @@
     <div class="empty-state">
       {{ ic.repetir() }}
       <h3>Nenhuma recorrência</h3>
-      <p>Cadastre aluguel, assinaturas e o que mais se repete todo mês.</p>
+      <p>Cadastre salário, aluguel, assinaturas — o que se repete todo mês.</p>
     </div>
     {% endif %}
   </section>
@@ -74,11 +85,18 @@
   </div>
   <form class="simple-form" method="POST" action="{{ url_for('salvar_recorrente') }}">
     <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <input type="hidden" name="tipo" id="rec-tipo" value="despesa">
+
+    <div class="type-toggle">
+      <button type="button" class="active despesa" data-rec-tipo="despesa">{{ ic.seta_cima_dir() }} Despesa</button>
+      <button type="button" data-rec-tipo="receita">{{ ic.seta_baixo_esq() }} Receita</button>
+    </div>
+
     <label class="field">
       <span>Nome</span>
       <input class="input" name="nome" required placeholder="Ex.: Netflix">
     </label>
-    <label class="field">
+    <label class="field" id="rec-campo-categoria">
       <span>Categoria</span>
       <select class="input" name="categoria">
         {% for c in categorias_despesa %}
@@ -98,7 +116,7 @@
     </div>
 
     <label class="field">
-      <span>Descontar de</span>
+      <span id="rec-rotulo-conta">Descontar de</span>
       {% if carteiras or cartoes %}
       <select class="input" name="conta" id="recorrente-conta">
         {% if carteiras %}
