@@ -290,6 +290,7 @@ def com_supabase(f):
         if supabase is None:
             flash("Sua sessão expirou. Faça login novamente.")
             return redirect(url_for("login"))
+
         return f(supabase, *args, **kwargs)
     return decorada
 
@@ -480,6 +481,21 @@ def _preferencias(supabase):
     return padrao
 
 
+def _limite_mensal(preferencias, orcamentos):
+    """Quanto a pessoa quer gastar no mes.
+
+    Vale o alvo que ela definiu; sem alvo, cai na soma dos limites por
+    categoria -- que era o unico numero disponivel antes e evita o card
+    aparecer zerado pra quem nunca mexeu nisso.
+    """
+    proprio = preferencias.get("limite_mensal")
+    try:
+        proprio = float(proprio or 0)
+    except (TypeError, ValueError):
+        proprio = 0.0
+    return proprio if proprio > 0 else sum(orcamentos.values())
+
+
 def _mes_atual():
     return date.today().strftime("%Y-%m")
 
@@ -655,8 +671,10 @@ def index(supabase):
         1 for t in do_mes if t.get("status") == "pendente" and not no_cartao(t)
     )
 
-    orcamento_total = sum(orcamentos.values())
+    preferencias = _preferencias(supabase)
+    orcamento_total = _limite_mensal(preferencias, orcamentos)
     restante = orcamento_total - gasto
+    estourou = orcamento_total > 0 and gasto > orcamento_total
 
     # Saldo disponivel: compra no cartao NAO sai da conta na hora -- ela
     # engorda a fatura, e o desconto acontece quando a fatura e paga.
@@ -699,7 +717,7 @@ def index(supabase):
 
     recentes = sorted(do_mes, key=lambda t: (t.get("data") or ""), reverse=True)[:4]
 
-    contexto = _contexto_base(supabase, "overview", transacoes)
+    contexto = _contexto_base(supabase, "overview", transacoes, preferencias)
     contexto.update({
         "saldo": saldo, "gasto": gasto, "receita": receita, "pendente": pendente,
         "orcamento_total": orcamento_total, "restante": restante,
@@ -711,6 +729,10 @@ def index(supabase):
         "gasto_no_cartao": sum(_valor(t) for t in pagas if no_cartao(t)),
         "pct_orcamento": (gasto / orcamento_total * 100) if orcamento_total else 0,
         "pct_restante": (max(0, restante) / orcamento_total * 100) if orcamento_total else 0,
+        "estourou": estourou,
+        "excedente": max(0, gasto - orcamento_total),
+        # Limite proprio ou soma das categorias: muda o texto do card.
+        "limite_proprio": bool(preferencias.get("limite_mensal")),
         "donut": donut, "lista_categorias": lista_categorias,
         "grafico": grafico, "recentes": recentes,
     })
@@ -1038,6 +1060,31 @@ def orcamentos(supabase):
     return render_template("orcamentos.html", **contexto)
 
 
+@app.route("/limite/salvar", methods=["POST"])
+@com_supabase
+def salvar_limite(supabase):
+    """Alvo de gasto do mes. Zero ou vazio volta pra soma das categorias."""
+    limite = _numero(request.form.get("limite"))
+    if limite < 0:
+        flash("Informe um valor válido.")
+        return _voltar()
+
+    # update, nao upsert: o upsert do PostgREST manda 'missing=null', entao
+    # toda coluna fora do payload vira NULL no INSERT -- e as NOT NULL da
+    # tabela (resumo_semanal, onboarding...) estouram. _preferencias garante
+    # que a linha existe, entao update basta e so mexe neste campo.
+    _preferencias(supabase)
+    supabase.table("preferencias").update({
+        "limite_mensal": limite if limite > 0 else None,
+    }).eq("user_id", _uid()).execute()
+
+    flash(
+        f"Limite mensal definido em {brl(limite)}." if limite > 0
+        else "Limite próprio removido: voltou a somar os orçamentos por categoria."
+    )
+    return _voltar()
+
+
 @app.route("/orcamento/salvar", methods=["POST"])
 @com_supabase
 def salvar_orcamento(supabase):
@@ -1063,12 +1110,23 @@ def salvar_orcamento(supabase):
 @com_supabase
 def recorrentes(supabase):
     lista = _recorrentes(supabase)
+    contas_lista = _contas(supabase)
+    tipos = {c["nome"]: c.get("tipo") for c in contas_lista}
+
     for r in lista:
         r["proximo"] = _proximo_lancamento(int(r.get("dia") or 1))
         r["cor"] = _cor(r.get("categoria"))
+        r["no_cartao"] = tipos.get(r.get("conta")) == "Cartão de crédito"
+        # Conta apagada depois de criada a recorrencia: avisa em vez de
+        # mostrar um nome que nao existe mais.
+        r["conta_sumiu"] = bool(r.get("conta")) and r["conta"] not in tipos
 
     contexto = _contexto_base(supabase, "recurring")
     contexto["recorrentes"] = lista
+    # Separadas por tipo pro select agrupar: cobranca no cartao cai na
+    # fatura, cobranca em conta sai do saldo -- nao e a mesma coisa.
+    contexto["carteiras"] = [c for c in contas_lista if c.get("tipo") != "Cartão de crédito"]
+    contexto["cartoes"] = [c for c in contas_lista if c.get("tipo") == "Cartão de crédito"]
     return render_template("recorrentes.html", **contexto)
 
 
@@ -1100,6 +1158,7 @@ def salvar_recorrente(supabase):
         "user_id": _uid(), "nome": nome,
         "categoria": request.form.get("categoria") or "Assinaturas",
         "valor": valor,
+        "conta": request.form.get("conta") or None,
         "dia": max(1, min(28, int(_numero(request.form.get("dia"), 1)))),
         "ativo": True,
     }).execute()
@@ -1246,10 +1305,12 @@ def assistente(supabase):
     todas = _transacoes(supabase)
     do_mes = _do_mes(todas, _mes_selecionado())
     limites = _orcamentos(supabase)
+    preferencias = _preferencias(supabase)
 
     pagas = [t for t in do_mes if _e_despesa(t) and t.get("status") == "pago"]
     gasto = sum(_valor(t) for t in pagas)
-    orcamento_total = sum(limites.values())
+    # Mesmo numero que o card da visao geral usa, pra nao divergirem.
+    orcamento_total = _limite_mensal(preferencias, limites)
 
     por_categoria = defaultdict(float)
     for t in pagas:
@@ -1269,7 +1330,7 @@ def assistente(supabase):
             session["conversa"] = conversa
         return redirect(url_for("assistente"))
 
-    contexto = _contexto_base(supabase, "assistant", todas)
+    contexto = _contexto_base(supabase, "assistant", todas, preferencias)
     contexto.update({
         "conversa": conversa,
         "gasto": gasto,
@@ -1347,13 +1408,15 @@ def configuracoes(supabase):
 @app.route("/preferencias/salvar", methods=["POST"])
 @com_supabase
 def salvar_preferencias(supabase):
-    supabase.table("preferencias").upsert({
-        "user_id": _uid(),
+    # Mesmo motivo do salvar_limite: upsert parcial zeraria as colunas que
+    # ficaram de fora -- aqui, o limite_mensal que a pessoa acabou de definir.
+    _preferencias(supabase)
+    supabase.table("preferencias").update({
         "nome": (request.form.get("nome") or "").strip() or "Usuário",
         "notificacoes": request.form.get("notificacoes") == "on",
         "tema_escuro": request.form.get("tema_escuro") == "on",
         "resumo_semanal": request.form.get("resumo_semanal") == "on",
-    }).execute()
+    }).eq("user_id", _uid()).execute()
     flash("Preferências salvas.")
     return _voltar()
 

@@ -98,6 +98,9 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .progress > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #11933f, #22c55e); transition: width .5s cubic-bezier(.2,.8,.2,1); }
 .budget-progress, .category-progress, .goal-progress { height: 9px; background: #202429; }
 .danger-progress > div { background: linear-gradient(90deg, #d97706, #f59e0b); }
+/* Estourou o limite: vermelho, não só o âmbar de "chegando perto". */
+.over-progress { background: #2a1618; }
+.over-progress > div { background: linear-gradient(90deg, #b91c1c, #ef4444); }
 
 .positive { color: #22c55e !important; }
 .negative { color: #ef4444 !important; }
@@ -263,6 +266,17 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .insight-box svg { width: 18px; }
 .insight-box p { margin: 0; color: #a1a7ae; font-size: 11px; line-height: 1.55; }
 .insight-box p strong { color: #22c55e; }
+
+/* Card de orçamento estourado */
+.budget-card.estourado { border-color: #4a2226; background: linear-gradient(145deg, #120c0d 0%, #0b0809 100%); }
+.budget-card.estourado:hover { border-color: #5d2a2e; }
+.budget-card.estourado .budget-total strong { color: #f4595f; }
+.insight-box.estourado { border-color: #45201f; background: #130c0c; }
+.insight-box.estourado > span { color: #f0625c; background: #2a1312; }
+.insight-box.estourado p strong { color: #f4595f; }
+.editar-limite { width: 26px !important; height: 26px !important; margin-left: 6px; vertical-align: middle; color: #69717a; }
+.editar-limite svg { width: 13px; height: 13px; }
+.editar-limite:hover { color: #cdd2d7; }
 .insight-box small { display: block; color: #6c747c; }
 
 .recent-card { overflow: hidden; }
@@ -373,12 +387,16 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .recurring-list article.inativo { opacity: .5; }
 .recurring-icon { width: 35px; height: 35px; display: grid; place-items: center; border-radius: 9px; color: #8e959d; background: #111417; }
 .recurring-icon svg { width: 16px; }
-.recurring-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.recurring-main > strong { color: #e5e7e9; font-size: 12px; }
+.recurring-main { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+.recurring-titulo { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.recurring-main strong { color: #e5e7e9; font-size: 12px; }
 .recurring-list article > div:nth-child(3) span { display: block; color: #656d76; font-size: 9px; }
 .recurring-list article > div:nth-child(3) strong { display: block; margin-top: 4px; color: #cbd0d4; font-size: 11px; }
 .recurring-list article > strong { color: #e4e6e8; font-size: 12px; }
 .recurring-list .row-actions { justify-content: flex-end; }
+.origem-recorrente { display: flex; align-items: center; gap: 5px; color: #69717a; font-size: 9px; }
+.origem-recorrente svg { width: 11px; height: 11px; flex: 0 0 11px; }
+.origem-recorrente.sumiu { color: #c98b3f; }
 .recurring-list .row-actions button { color: #6f7780; }
 
 .goal-card, .add-goal { min-height: 260px; padding: 20px; }

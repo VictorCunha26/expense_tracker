@@ -104,6 +104,10 @@ create table if not exists public.recorrentes (
 
 create index if not exists recorrentes_user_idx on public.recorrentes (user_id);
 
+-- De onde a cobranca sai (conta, dinheiro ou cartao). Guarda o nome, igual
+-- ao campo 'conta' de despesas, pra os dois falarem a mesma lingua.
+alter table public.recorrentes add column if not exists conta text;
+
 
 -- ------------------------------------------------------------
 -- 6) metas (objetivos financeiros)
@@ -133,6 +137,11 @@ create table if not exists public.preferencias (
   resumo_semanal boolean not null default true,
   onboarding     boolean not null default false
 );
+
+-- Quanto a pessoa quer gastar por mes, no total. Fica separado dos limites
+-- por categoria: e o alvo que ela mesma define. Nulo = usa a soma das
+-- categorias, que era o comportamento anterior.
+alter table public.preferencias add column if not exists limite_mensal numeric;
 
 
 -- ============================================================

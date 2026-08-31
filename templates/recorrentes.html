@@ -14,9 +14,19 @@
       {% for r in recorrentes %}
       <article class="{{ '' if r.ativo else 'inativo' }}">
         <span class="recurring-icon">{{ ic.repetir() }}</span>
+        {# A origem fica junto do nome: a coluna do "próximo lançamento"
+           some no celular, e aí ela desapareceria da tela. #}
         <div class="recurring-main">
-          <strong>{{ r.nome }}</strong>
-          <span class="category-badge" style="color:{{ r.cor }};border-color:{{ r.cor }}55;background:{{ r.cor }}12">{{ r.categoria }}</span>
+          <div class="recurring-titulo">
+            <strong>{{ r.nome }}</strong>
+            <span class="category-badge" style="color:{{ r.cor }};border-color:{{ r.cor }}55;background:{{ r.cor }}12">{{ r.categoria }}</span>
+          </div>
+          {% if r.conta %}
+            <small class="origem-recorrente {{ 'sumiu' if r.conta_sumiu }}">
+              {% if r.conta_sumiu %}{{ ic.raio() }}{% elif r.no_cartao %}{{ ic.cartao() }}{% else %}{{ ic.banco() }}{% endif %}
+              {{ r.conta }}{% if r.conta_sumiu %} (removida){% endif %}
+            </small>
+          {% endif %}
         </div>
         <div>
           <span>Próximo lançamento</span>
@@ -86,6 +96,32 @@
         <input class="input" type="number" name="dia" min="1" max="28" value="5">
       </label>
     </div>
+
+    <label class="field">
+      <span>Descontar de</span>
+      {% if carteiras or cartoes %}
+      <select class="input" name="conta" id="recorrente-conta">
+        {% if carteiras %}
+        <optgroup label="Contas e dinheiro">
+          {% for c in carteiras %}<option value="{{ c.nome }}">{{ c.nome }}</option>{% endfor %}
+        </optgroup>
+        {% endif %}
+        {% if cartoes %}
+        <optgroup label="Cartões de crédito">
+          {% for c in cartoes %}<option value="{{ c.nome }}" data-cartao="1">{{ c.nome }}</option>{% endfor %}
+        </optgroup>
+        {% endif %}
+      </select>
+      {% else %}
+      <span class="aviso-inline">Cadastre uma conta ou cartão em “Contas e cartões” para escolher a origem.</span>
+      {% endif %}
+    </label>
+
+    <p class="dica" id="dica-recorrente-cartao" hidden>
+      {{ ic.cartao() }}
+      <span>No cartão, a cobrança entra na fatura do mês — o desconto na conta acontece
+      quando você paga a fatura.</span>
+    </p>
     <div class="modal-footer">
       <button type="button" class="btn" data-fechar>Cancelar</button>
       <button type="submit" class="btn primary-button">Criar recorrência</button>

@@ -135,6 +135,7 @@
     $("#titulo-excluir").textContent = d.titulo || "Excluir?"
     $("#texto-excluir").textContent = d.texto || "Esta ação não pode ser desfeita."
 
+
     gatilho.closest("details.menu")?.removeAttribute("open")
     abrir("modal-excluir")
   })
@@ -170,6 +171,16 @@
       ajustarTipoConta()
     })
   })
+
+  // Recorrência no cartão não sai da conta na hora: entra na fatura.
+  const avisarRecorrenteNoCartao = () => {
+    const origem = $("#recorrente-conta")
+    const dica = $("#dica-recorrente-cartao")
+    if (!origem || !dica) return
+    dica.hidden = origem.selectedOptions[0]?.dataset.cartao !== "1"
+  }
+  $("#recorrente-conta")?.addEventListener("change", avisarRecorrenteNoCartao)
+  avisarRecorrenteNoCartao()
 
   /* ---------------------------------------------------------
      Fatura do cartão
@@ -223,6 +234,13 @@
     ajustarTipoConta()
     item.closest("details.menu")?.removeAttribute("open")
     abrir("modal-conta")
+  })
+
+  document.addEventListener("click", (evento) => {
+    const item = evento.target.closest("[data-editar-limite]")
+    if (!item) return
+    $("#limite-valor").value = String(item.dataset.limite).replace(".", ",")
+    abrir("modal-limite")
   })
 
   document.addEventListener("click", (evento) => {
