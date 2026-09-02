@@ -995,24 +995,56 @@ def salvar_transacao(supabase):
     if id_transacao:
         supabase.table("despesas").update({**campos, "valor": total, "data": data_base}) \
             .eq("id", id_transacao).eq("user_id", _uid()).execute()
-        flash("Transação atualizada.")
+        # Marcar "repetir mensalmente" ao EDITAR tambem tem que criar a regra.
+        # Antes esse caminho retornava antes do bloco que a cria, entao a
+        # opcao so tinha efeito no momento de cadastrar a transacao.
+        criada = _criar_recorrente(supabase, campos, total, data_base)
+        flash("Transação atualizada. Recorrência criada." if criada else "Transação atualizada.")
         return _voltar()
 
     novas = _parcelas(campos, nome, total, parcelas, data_base)
     supabase.table("despesas").insert(novas).execute()
 
     # "Repetir mensalmente" tambem cria a regra na tela de recorrentes.
-    if campos["recorrente"]:
-        supabase.table("recorrentes").insert({
-            "user_id": _uid(), "nome": nome,
-            "categoria": campos["categoria"],
-            "tipo": tipo,
-            "conta": campos["conta"],
-            "valor": novas[0]["valor"], "dia": int(data_base[8:10]), "ativo": True,
-        }).execute()
+    _criar_recorrente(supabase, campos, novas[0]["valor"], data_base)
 
     flash(_confirmacao_lancamento(supabase, campos["conta"], data_base, parcelas))
     return _voltar()
+
+
+def _criar_recorrente(supabase, campos, valor, data_base):
+    """Cria a regra em Recorrentes quando 'repetir mensalmente' esta marcado.
+
+    Vale pra despesa e pra receita. Nao duplica: marcar de novo a mesma
+    transacao (ou reeditar) nao gera uma segunda regra igual.
+    """
+    if not campos.get("recorrente"):
+        return False
+
+    chave = _chave_conta(campos.get("conta"))
+    ja_existe = any(
+        r.get("nome") == campos["nome_despesa"] and _chave_conta(r.get("conta")) == chave
+        for r in _recorrentes(supabase)
+    )
+    if ja_existe:
+        return False
+
+    try:
+        dia = max(1, min(28, int(data_base[8:10])))
+    except (ValueError, TypeError):
+        dia = 1
+
+    supabase.table("recorrentes").insert({
+        "user_id": _uid(),
+        "nome": campos["nome_despesa"],
+        "categoria": campos["categoria"],
+        "tipo": campos["tipo"],
+        "conta": campos["conta"],
+        "valor": valor,
+        "dia": dia,
+        "ativo": True,
+    }).execute()
+    return True
 
 
 def _parcelas(campos, nome, total, parcelas, data_base):
