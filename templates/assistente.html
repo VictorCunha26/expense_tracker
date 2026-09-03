@@ -10,6 +10,16 @@
     <h2>{{ 'Você está dentro do orçamento.' if dentro_do_orcamento else 'Seu orçamento precisa de atenção.' }}</h2>
     <p>Os insights são calculados direto pelas movimentações de {{ mes_rotulo }} — nada sai do seu banco de dados.</p>
 
+    <div class="voice-feature-card">
+      <span>{{ ic.microfone() }}</span>
+      <div>
+        <small>Novo recurso</small>
+        <strong>Synch Voice</strong>
+        <p>Fale uma movimentação e revise antes de salvar.</p>
+      </div>
+      <button type="button" id="botao-voz-destaque">Experimentar</button>
+    </div>
+
     <div class="insight-list">
       <article>
         {{ ic.tendencia_baixo() }}
@@ -75,10 +85,12 @@
     <form class="chat-input" method="POST" action="{{ url_for('assistente', mes=mes_url) }}">
       <input class="input" name="pergunta" id="pergunta" required
              placeholder="Pergunte sobre suas finanças..." autocomplete="off">
+      <button type="button" class="voice-button" id="botao-voz" aria-label="Adicionar transação por voz">{{ ic.microfone() }}</button>
       <button class="btn btn-icon" type="submit" aria-label="Enviar">{{ ic.enviar() }}</button>
     </form>
     <small class="assistant-disclaimer">
       Análise baseada nos seus próprios dados; não substitui orientação financeira profissional.
+      A disponibilidade do microfone depende do navegador.
     </small>
   </section>
 

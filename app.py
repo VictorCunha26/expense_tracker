@@ -794,6 +794,27 @@ def cadastro():
     return render_template("cadastro.html")
 
 
+@app.route("/esqueci-senha", methods=["GET", "POST"])
+def esqueci_senha():
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip()
+        if email:
+            supabase = conectar()
+            try:
+                supabase.auth.reset_password_for_email(
+                    email, {"redirect_to": url_for("login", _external=True)}
+                )
+            except Exception:
+                pass  # nao revela se o e-mail existe ou nao
+
+        # Mensagem igual sempre que o e-mail exista ou nao -- evita que
+        # alguem descubra quais e-mails estao cadastrados por tentativa.
+        flash("Se o e-mail estiver cadastrado, enviamos um link para redefinir a senha.")
+        return redirect(url_for("login"))
+
+    return render_template("esqueci_senha.html")
+
+
 @app.route("/logout")
 def logout():
     session.clear()
@@ -860,6 +881,18 @@ def index(supabase):
         por_categoria[t.get("categoria") or "Outros"] += quanto(t)
     ordenadas = sorted(por_categoria.items(), key=lambda i: i[1], reverse=True)
     donut = _donut(ordenadas)
+    top_categoria = ordenadas[0][0] if ordenadas else "Sem categoria"
+
+    # Saude financeira: resume o mes num numero so, a partir do uso do
+    # orcamento, de contas pendentes e de a receita cobrir o gasto.
+    uso_orcamento = min(100, (gasto / orcamento_total * 100)) if orcamento_total else 0
+    saude_score = max(35, min(96, round(
+        100 - uso_orcamento * 0.45
+        - (5 if qtd_pendentes else 0)
+        + (8 if receita > gasto else 0)
+    )))
+    saude_label = "Muito boa" if saude_score >= 75 else "Estável" if saude_score >= 55 else "Em atenção"
+
     lista_categorias = [
         {
             "nome": nome, "valor": valor, "cor": _cor(nome),
@@ -897,6 +930,8 @@ def index(supabase):
         "pct_restante": (max(0, restante) / orcamento_total * 100) if orcamento_total else 0,
         "donut": donut, "lista_categorias": lista_categorias,
         "grafico": grafico, "recentes": recentes,
+        "top_categoria": top_categoria,
+        "saude_score": saude_score, "saude_label": saude_label,
     })
     return render_template("overview.html", **contexto)
 

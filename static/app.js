@@ -333,6 +333,164 @@
   })
 
   /* ---------------------------------------------------------
+     Synch Voice: fala uma transação, revisa e confirma
+
+     Usa a Web Speech API do navegador (sem servidor). O texto
+     reconhecido é interpretado aqui mesmo e joga o resultado dentro do
+     modal de transação de sempre -- o usuário revisa e salva pelo
+     caminho normal, sem endpoint novo.
+     --------------------------------------------------------- */
+
+  const chat = $("#chat")
+  const Reconhecimento = window.SpeechRecognition || window.webkitSpeechRecognition
+  const botoesVoz = $$("#botao-voz, #botao-voz-destaque")
+
+  const SVG_MIC = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`
+  const SVG_STOP = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>`
+
+  const REGRAS_CATEGORIA = [
+    [/(mercado|supermercado|restaurante|delivery|ifood|lanche|comida|padaria|almoco|jantar)/, "Alimentação"],
+    [/(uber|\b99\b|combustivel|gasolina|posto|onibus|metro|transporte|estacionamento|pedagio)/, "Transporte"],
+    [/(aluguel|condominio|energia|luz|agua|casa|moradia)/, "Moradia"],
+    [/(netflix|spotify|internet|assinatura|celular|prime|disney|software)/, "Assinaturas"],
+    [/(cinema|academia|viagem|lazer|jogo|show|passeio)/, "Lazer"],
+  ]
+  const REGRAS_DESCRICAO = [
+    [/supermercado/, "Supermercado"], [/mercado/, "Mercado"], [/restaurante|almoco|jantar/, "Restaurante"],
+    [/ifood|delivery/, "Delivery"], [/netflix/, "Netflix"], [/spotify/, "Spotify"], [/academia/, "Academia"],
+    [/aluguel/, "Aluguel"], [/uber/, "Uber"], [/gasolina|combustivel|posto/, "Combustível"],
+    [/salario/, "Salário"], [/freelance/, "Freelance"], [/internet/, "Internet"], [/energia|luz/, "Energia"],
+    [/farmacia|remedio/, "Farmácia"], [/cinema/, "Cinema"],
+  ]
+
+  const semAcento = (texto) => texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+
+  const interpretarVoz = (texto) => {
+    const normalizado = semAcento(texto)
+    const tipo = /(recebi|ganhei|entrou|entrada|salario|renda|freelance|vendi|pagamento recebido)/.test(normalizado) ? "receita" : "despesa"
+    const categoria = tipo === "receita" ? "Receita" : (REGRAS_CATEGORIA.find(([r]) => r.test(normalizado))?.[1] || "Outros")
+    const descricao = REGRAS_DESCRICAO.find(([r]) => r.test(normalizado))?.[1] || (tipo === "receita" ? "Receita por voz" : "Despesa por voz")
+    const valor = (
+      normalizado.match(/r\$\s*(\d[\d.,]*)/)
+      || normalizado.match(/(\d[\d.,]*)\s*(?:reais?|real)\b/)
+      || normalizado.match(/\b(\d+(?:[.,]\d{1,2})?)\b/)
+    )?.[1] || ""
+
+    const data = new Date()
+    if (/anteontem/.test(normalizado)) data.setDate(data.getDate() - 2)
+    else if (/ontem/.test(normalizado)) data.setDate(data.getDate() - 1)
+    const isoData = `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, "0")}-${String(data.getDate()).padStart(2, "0")}`
+
+    const conta = todasContas.find((c) => c.valor && normalizado.includes(semAcento(c.valor)))?.valor || ""
+    const parcelasFala = normalizado.match(/(\d+)\s*(?:x|vezes|parcelas)/)
+    const pendente = /(pendente|a pagar|vencimento|vence)/.test(normalizado)
+
+    return { descricao, valor, tipo, categoria, data: isoData, conta, parcelas: parcelasFala?.[1] || null, pendente }
+  }
+
+  const bolhaVoz = () => {
+    let bolha = document.getElementById("bolha-voz")
+    if (!bolha && chat) {
+      bolha = document.createElement("div")
+      bolha.id = "bolha-voz"
+      bolha.className = "voice-capture is-listening"
+      bolha.innerHTML = `
+        <div class="voice-capture-top">
+          <span class="voice-pulse">${SVG_MIC}</span>
+          <div><strong>Estou ouvindo...</strong><small>Fale naturalmente a sua movimentação</small></div>
+          <button type="button" aria-label="Parar gravação">${SVG_STOP}</button>
+        </div>
+        <div class="voice-wave">${Array.from({ length: 18 }, (_, i) => `<i style="animation-delay:${i * 45}ms"></i>`).join("")}</div>
+        <p>O texto aparecerá aqui enquanto você fala...</p>`
+      chat.appendChild(bolha)
+      chat.scrollTop = chat.scrollHeight
+      bolha.querySelector("button").addEventListener("click", () => reconhecimento?.stop())
+    }
+    return bolha
+  }
+
+  let reconhecimento = null
+
+  const iniciarVoz = () => {
+    if (!Reconhecimento) return
+    if (reconhecimento) { reconhecimento.stop(); return }
+
+    let capturado = ""
+    reconhecimento = new Reconhecimento()
+    reconhecimento.lang = "pt-BR"
+    reconhecimento.interimResults = true
+    reconhecimento.continuous = false
+
+    reconhecimento.onstart = () => {
+      botoesVoz.forEach((b) => b.classList.add("active"))
+      const destaque = document.getElementById("botao-voz-destaque")
+      if (destaque) destaque.textContent = "Ouvindo..."
+      bolhaVoz()
+    }
+    reconhecimento.onresult = (evento) => {
+      capturado = Array.from(evento.results).map((r) => r[0]?.transcript || "").join(" ").trim()
+      const bolha = document.getElementById("bolha-voz")
+      if (bolha) bolha.querySelector("p").textContent = capturado || "O texto aparecerá aqui enquanto você fala..."
+    }
+    reconhecimento.onerror = (evento) => {
+      botoesVoz.forEach((b) => b.classList.remove("active"))
+      const destaque = document.getElementById("botao-voz-destaque")
+      if (destaque) destaque.textContent = "Experimentar"
+      document.getElementById("bolha-voz")?.remove()
+      alert(evento.error === "not-allowed"
+        ? "Autorize o acesso ao microfone para usar o Synch Voice."
+        : "Não consegui entender o áudio. Tente novamente.")
+    }
+    reconhecimento.onend = () => {
+      botoesVoz.forEach((b) => b.classList.remove("active"))
+      const destaque = document.getElementById("botao-voz-destaque")
+      if (destaque) destaque.textContent = "Experimentar"
+      reconhecimento = null
+
+      const bolha = document.getElementById("bolha-voz")
+      if (!capturado) { bolha?.remove(); return }
+
+      if (bolha) {
+        bolha.classList.remove("is-listening")
+        bolha.querySelector("strong").textContent = "Áudio reconhecido"
+        bolha.querySelector("small").textContent = "Preenchendo o formulário para revisão..."
+        bolha.querySelector("button")?.remove()
+      }
+
+      const rascunho = interpretarVoz(capturado)
+      prepararNova()
+      definirTipo(rascunho.tipo)
+      if ($("#campo-nome")) $("#campo-nome").value = rascunho.descricao
+      if ($("#campo-valor")) $("#campo-valor").value = rascunho.valor
+      if ($("#campo-data")) $("#campo-data").value = rascunho.data
+      if ($("#campo-categoria")) $("#campo-categoria").value = rascunho.categoria
+      if (rascunho.conta && $("#campo-conta")) $("#campo-conta").value = rascunho.conta
+      if ($("#campo-status")) $("#campo-status").value = rascunho.pendente ? "pendente" : "pago"
+      if ($("#campo-descricao")) $("#campo-descricao").value = `Adicionado pelo Synch Voice: "${capturado}"`
+      if (rascunho.parcelas && $("#campo-parcelas")) {
+        const opcoes = $$("#campo-parcelas option").map((o) => o.value)
+        if (opcoes.includes(rascunho.parcelas)) $("#campo-parcelas").value = rascunho.parcelas
+      }
+      if ($("#titulo-transacao")) $("#titulo-transacao").textContent = "Revisar transação por voz"
+      if ($("#rotulo-salvar")) $("#rotulo-salvar").textContent = "Confirmar transação"
+
+      setTimeout(() => { bolha?.remove(); abrir("modal-transacao") }, 550)
+    }
+
+    try { reconhecimento.start() } catch { alert("Não foi possível iniciar o microfone.") }
+  }
+
+  if (!Reconhecimento) {
+    botoesVoz.forEach((b) => {
+      b.disabled = true
+      b.title = "Reconhecimento de voz não suportado neste navegador."
+      if (b.id === "botao-voz-destaque") b.textContent = "Indisponível"
+    })
+  } else {
+    botoesVoz.forEach((b) => b.addEventListener("click", iniciarVoz))
+  }
+
+  /* ---------------------------------------------------------
      Assistente: chips preenchem e enviam a pergunta
      --------------------------------------------------------- */
 
@@ -345,7 +503,6 @@
   })
 
   // Conversa longa: começa já no fim.
-  const chat = $("#chat")
   if (chat) chat.scrollTop = chat.scrollHeight
 
   /* ---------------------------------------------------------

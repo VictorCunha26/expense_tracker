@@ -1,0 +1,23 @@
+{% extends "_auth.html" %}
+{% import "icones.html" as ic %}
+
+{% block titulo %}Esqueci minha senha{% endblock %}
+{% block cabecalho %}Redefinir senha{% endblock %}
+{% block chamada %}Informe seu e-mail e enviaremos um link para você criar uma nova senha.{% endblock %}
+
+{% block formulario %}
+<form class="login-form" action="{{ url_for('esqueci_senha') }}" method="POST">
+  <label class="login-field">
+    <span>E-mail</span>
+    <div>
+      {{ ic.email() }}
+      <input class="input" type="email" name="email" autocomplete="email"
+             placeholder="seu@email.com" required autofocus>
+    </div>
+  </label>
+
+  <button type="submit" class="btn primary-button login-submit">Enviar instruções {{ ic.seta_direita() }}</button>
+</form>
+{% endblock %}
+
+{% block rodape %}Lembrou a senha? <a href="{{ url_for('login') }}">Voltar para o login</a>{% endblock %}

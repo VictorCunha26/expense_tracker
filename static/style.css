@@ -202,6 +202,34 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .surface:hover { border-color: #292e34; box-shadow: inset 0 1px 0 #ffffff08, 0 22px 65px #0000002c; }
 
 /* ---------------------------------------------------------
+   Resumo inteligente + saúde financeira
+   --------------------------------------------------------- */
+
+.overview-hero { display: flex; align-items: center; justify-content: space-between; gap: 26px; padding: 26px 28px; flex-wrap: wrap; }
+.overview-hero-copy { flex: 1 1 320px; min-width: 0; }
+.overview-eyebrow { display: inline-flex; align-items: center; gap: 7px; color: #22c55e; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .16em; }
+.overview-eyebrow svg { width: 13px; }
+.overview-hero-copy h2 { margin: 14px 0 9px; max-width: 480px; color: #f5f6f7; font-size: clamp(19px, 2vw, 25px); line-height: 1.22; letter-spacing: -.03em; }
+.overview-hero-copy p { margin: 0; max-width: 540px; color: #9aa0a8; font-size: 13px; line-height: 1.65; }
+.overview-hero-copy p strong { color: #d9dcdf; }
+.overview-hero-actions { display: flex; align-items: center; gap: 20px; margin-top: 18px; flex-wrap: wrap; }
+.overview-hero-actions .primary-button { height: 40px; padding: 0 16px; }
+.link-arrow { display: inline-flex; align-items: center; gap: 6px; color: #a3a9b0; font-size: 12px; font-weight: 550; }
+.link-arrow svg { width: 15px; }
+.link-arrow:hover { color: #e7e9eb; }
+
+.health-card { display: flex; align-items: center; gap: 16px; padding: 16px 20px; flex: 0 0 auto; border: 1px solid #1c2024; border-radius: 14px; background: #080a0c; }
+.health-ring { --score: 0deg; width: 76px; height: 76px; flex: 0 0 76px; position: relative; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(#22c55e var(--score), #1c2024 0); }
+.health-ring::before { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: #080a0c; }
+.health-ring span { position: relative; z-index: 1; display: flex; align-items: baseline; gap: 2px; color: #f4f5f6; }
+.health-ring strong { font-size: 18px; letter-spacing: -.03em; }
+.health-ring small { color: #6d747d; font-size: 9px; }
+.health-card > div:last-child { display: flex; flex-direction: column; }
+.health-card > div:last-child span { color: #7b828b; font-size: 10px; }
+.health-card > div:last-child strong { margin-top: 4px; color: #f0f2f3; font-size: 14px; }
+.health-card > div:last-child small { margin-top: 4px; max-width: 150px; color: #606871; font-size: 9px; line-height: 1.5; }
+
+/* ---------------------------------------------------------
    KPIs e gráficos
    --------------------------------------------------------- */
 
@@ -451,6 +479,40 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .chat-input input { height: 44px; background: #080a0c; }
 .chat-input button { width: 44px; height: 44px; flex: 0 0 44px; color: #fff; background: #168e3e; border-color: #168e3e; }
 .assistant-disclaimer { display: block; margin-top: 8px; color: #525a63; font-size: 9px; }
+
+/* ---------------------------------------------------------
+   Synch Voice — lançamento de transação por voz
+   --------------------------------------------------------- */
+
+.voice-feature-card { display: flex; align-items: center; gap: 13px; margin-top: 22px; padding: 14px; border: 1px solid #1b2f22; border-radius: 12px; background: linear-gradient(145deg, #0d1712, #080a0c); }
+.voice-feature-card > span { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 38px; border-radius: 10px; color: #35d16a; background: #0d2113; }
+.voice-feature-card > span svg { width: 18px; }
+.voice-feature-card > div { flex: 1; min-width: 0; }
+.voice-feature-card small { display: block; color: #22c55e; font-size: 9px; text-transform: uppercase; letter-spacing: .1em; }
+.voice-feature-card strong { display: block; margin-top: 2px; color: #eef0f1; font-size: 12px; }
+.voice-feature-card p { margin: 3px 0 0; color: #7b828b; font-size: 10px; line-height: 1.5; }
+.voice-feature-card button { flex: 0 0 auto; height: 34px; padding: 0 13px; border: 1px solid #23b754; border-radius: 8px; background: transparent; color: #35d16a; font-size: 11px; font-weight: 600; }
+.voice-feature-card button:hover:not(:disabled) { background: #0d2113; }
+.voice-feature-card button:disabled { opacity: .45; cursor: not-allowed; border-color: #24292e; color: #6d747d; }
+
+.voice-button { width: 44px; height: 44px; flex: 0 0 44px; border: 1px solid #24292e; border-radius: 9px; background: #0a0c0e; color: #8a9199; }
+.voice-button:hover:not(:disabled) { border-color: #23b754; color: #35d16a; }
+.voice-button.active { border-color: #23b754; background: #0d2113; color: #35d16a; animation: voice-pulse-ring 1.4s ease-in-out infinite; }
+.voice-button:disabled { opacity: .4; cursor: not-allowed; }
+@keyframes voice-pulse-ring { 0%, 100% { box-shadow: 0 0 0 0 #22c55e40; } 50% { box-shadow: 0 0 0 6px #22c55e00; } }
+
+.voice-capture { max-width: 90%; padding: 14px 16px; border: 1px solid #1b2f22; border-radius: 4px 14px 14px 14px; background: #0a120d; animation: modal-in .2s ease both; }
+.voice-capture-top { display: flex; align-items: center; gap: 11px; }
+.voice-pulse { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 34px; border-radius: 50%; color: #35d16a; background: #0d2113; }
+.voice-capture.is-listening .voice-pulse { animation: voice-pulse-ring 1.2s ease-in-out infinite; }
+.voice-pulse svg { width: 16px; }
+.voice-capture-top strong { display: block; color: #eef0f1; font-size: 12px; }
+.voice-capture-top small { display: block; margin-top: 2px; color: #6f7780; font-size: 9px; }
+.voice-capture-top button { margin-left: auto; width: 30px; height: 30px; flex: 0 0 30px; border: 1px solid #24292e; border-radius: 8px; background: #0a0c0e; color: #ef5a5a; }
+.voice-wave { display: flex; align-items: flex-end; gap: 3px; height: 22px; margin: 12px 0; }
+.voice-wave i { width: 3px; flex: 0 0 3px; border-radius: 2px; background: #22c55e; animation: voice-wave-bar 1s ease-in-out infinite; }
+@keyframes voice-wave-bar { 0%, 100% { height: 4px; } 50% { height: 20px; } }
+.voice-capture p { margin: 0; color: #b7d9c1; font-size: 12px; line-height: 1.6; min-height: 18px; }
 
 /* ---------------------------------------------------------
    Configurações

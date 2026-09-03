@@ -5,6 +5,35 @@
 {% block conteudo %}
 <div class="view-stack">
 
+  {# ---------------- Resumo inteligente + saúde financeira ---------------- #}
+  <section class="surface overview-hero">
+    <div class="overview-hero-copy">
+      <span class="overview-eyebrow">{{ ic.brilho() }} Resumo inteligente do período</span>
+      <h2>{{ 'Seu mês está sob controle.' if restante >= 0 else 'Seu orçamento precisa de atenção.' }}</h2>
+      <p>
+        {% if restante >= 0 %}
+          Você ainda tem <strong class="valor">{{ restante|brl }}</strong> disponíveis. A maior concentração de gastos está em <strong>{{ top_categoria }}</strong>.
+        {% else %}
+          O orçamento foi ultrapassado em <strong class="valor">{{ restante|abs|brl }}</strong>. Revise seus limites e despesas recorrentes.
+        {% endif %}
+      </p>
+      <div class="overview-hero-actions">
+        <a class="btn primary-button" href="{{ url_for('orcamentos', mes=mes_url) }}">{{ ic.medidor() }} Revisar orçamento</a>
+        <a class="link-arrow" href="{{ url_for('relatorios', mes=mes_url) }}">Abrir relatório {{ ic.seta_direita() }}</a>
+      </div>
+    </div>
+    <div class="health-card">
+      <div class="health-ring" style="--score:{{ (saude_score * 3.6)|round(1) }}deg">
+        <span><strong>{{ saude_score }}</strong><small>/100</small></span>
+      </div>
+      <div>
+        <span>Saúde financeira</span>
+        <strong>{{ saude_label }}</strong>
+        <small>Calculada com orçamento, saldo e pendências</small>
+      </div>
+    </div>
+  </section>
+
   {# ---------------- KPIs ---------------- #}
   <section class="kpi-grid">
     <article class="surface kpi-card">
