@@ -39,6 +39,14 @@ CORES = {
 }
 COR_PADRAO = "#64748b"
 
+# Categorias que o usuario cria na tela de orcamentos nao tem cor fixa --
+# essa paleta e sorteada (por hash do nome, entao sempre a mesma cor pra
+# mesma categoria) pra nao ficar tudo cinza no grafico.
+PALETA_CATEGORIA_CUSTOM = [
+    "#ec4899", "#0ea5e9", "#a855f7", "#eab308",
+    "#14b8a6", "#f97316", "#6366f1", "#84cc16",
+]
+
 TIPOS_CONTA = ["Conta corrente", "Cartão de crédito", "Dinheiro"]
 
 ORCAMENTOS_PADRAO = {
@@ -126,7 +134,12 @@ def _numero(texto, padrao=0.0):
 
 
 def _cor(categoria):
-    return CORES.get(categoria, COR_PADRAO)
+    if categoria in CORES:
+        return CORES[categoria]
+    if not categoria:
+        return COR_PADRAO
+    indice = sum(ord(c) for c in categoria) % len(PALETA_CATEGORIA_CUSTOM)
+    return PALETA_CATEGORIA_CUSTOM[indice]
 
 
 def _chave_conta(nome):
@@ -640,7 +653,7 @@ def _preferencias(supabase):
     padrao = {
         "user_id": _uid(),
         "nome": (session.get("email") or "").split("@")[0].title() or "Usuário",
-        "notificacoes": True, "tema_escuro": True,
+        "notificacoes": True,
         "resumo_semanal": True, "onboarding": False,
     }
     try:
@@ -716,6 +729,13 @@ def _contexto_base(supabase, tela, transacoes=None, preferencias=None):
     hoje = date.today()
     data_padrao = hoje.isoformat() if mes == mes_atual else f"{mes}-01"
 
+    # Categorias de despesa: as fixas mais as que o usuario criou na tela
+    # de orcamentos -- assim uma categoria nova ja aparece pra escolher
+    # ao lancar uma transacao ou uma recorrencia.
+    extras = sorted(c for c in _orcamentos(supabase) if c not in CATEGORIAS_DESPESA)
+    categorias_despesa = CATEGORIAS_DESPESA + extras
+    categorias = categorias_despesa + ["Receita"]
+
     return {
         "tela": tela,
         "titulo": titulo,
@@ -730,8 +750,8 @@ def _contexto_base(supabase, tela, transacoes=None, preferencias=None):
         "meses": _meses_disponiveis(transacoes),
         "email": session.get("email"),
         "preferencias": preferencias,
-        "categorias": CATEGORIAS,
-        "categorias_despesa": CATEGORIAS_DESPESA,
+        "categorias": categorias,
+        "categorias_despesa": categorias_despesa,
         "tipos_conta": TIPOS_CONTA,
         "cores": CORES,
         # Receita nao entra em cartao de credito, entao o modal precisa
@@ -1420,17 +1440,32 @@ def orcamentos(supabase):
 @app.route("/orcamento/salvar", methods=["POST"])
 @com_supabase
 def salvar_orcamento(supabase):
-    categoria = request.form.get("categoria")
+    categoria = (request.form.get("categoria") or "").strip()
     limite = _numero(request.form.get("limite"))
+
     if not categoria or limite <= 0:
-        flash("Informe um limite válido.")
+        flash("Informe um nome de categoria e um limite válido.")
         return _voltar()
+    # "Receita" e reservado pra entradas -- nao e uma categoria de gasto,
+    # entao nao pode virar um orcamento.
+    if categoria.lower() == "receita":
+        flash("Receita não é uma categoria de despesa; escolha outro nome.")
+        return _voltar()
+
+    # A mesma categoria existente (mesmo nome, ignorando maiusculas) tem
+    # que so atualizar o limite -- sem isso "moradia" e "Moradia" viravam
+    # duas linhas diferentes pro upsert, que compara o texto exato.
+    existente = next(
+        (nome for nome in _orcamentos(supabase) if nome.lower() == categoria.lower()),
+        None,
+    )
+    categoria = existente or categoria
 
     supabase.table("orcamentos").upsert(
         {"user_id": _uid(), "categoria": categoria, "limite": limite},
         on_conflict="user_id,categoria",
     ).execute()
-    flash("Orçamento atualizado.")
+    flash("Categoria criada." if not existente else "Orçamento atualizado.")
     return _voltar()
 
 
@@ -1490,6 +1525,7 @@ def _proximo_lancamento(dia):
 @app.route("/recorrente/salvar", methods=["POST"])
 @com_supabase
 def salvar_recorrente(supabase):
+    id_recorrente = request.form.get("id")
     nome = (request.form.get("nome") or "").strip()
     valor = _numero(request.form.get("valor"))
     if not nome or valor <= 0:
@@ -1497,16 +1533,26 @@ def salvar_recorrente(supabase):
         return _voltar()
 
     tipo = "receita" if request.form.get("tipo") == "receita" else "despesa"
-    supabase.table("recorrentes").insert({
-        "user_id": _uid(), "nome": nome,
+    campos = {
+        "nome": nome,
         "categoria": "Receita" if tipo == "receita" else (request.form.get("categoria") or "Assinaturas"),
         "tipo": tipo,
         "valor": valor,
         "conta": request.form.get("conta") or None,
         "dia": max(1, min(28, int(_numero(request.form.get("dia"), 1)))),
-        "ativo": True,
-    }).execute()
-    flash("Recorrência criada.")
+    }
+
+    if id_recorrente:
+        # Edita sem mexer em "ativo": pausar/retomar e coisa do switch,
+        # nao do formulario.
+        supabase.table("recorrentes").update(campos) \
+            .eq("id", id_recorrente).eq("user_id", _uid()).execute()
+        flash("Recorrência atualizada.")
+    else:
+        supabase.table("recorrentes").insert({
+            **campos, "user_id": _uid(), "ativo": True,
+        }).execute()
+        flash("Recorrência criada.")
     return _voltar()
 
 
@@ -1758,7 +1804,6 @@ def salvar_preferencias(supabase):
     supabase.table("preferencias").update({
         "nome": (request.form.get("nome") or "").strip() or "Usuário",
         "notificacoes": request.form.get("notificacoes") == "on",
-        "tema_escuro": request.form.get("tema_escuro") == "on",
         "resumo_semanal": request.form.get("resumo_semanal") == "on",
     }).eq("user_id", _uid()).execute()
     flash("Preferências salvas.")
@@ -1806,6 +1851,10 @@ def importar_csv(supabase):
     delimitador = ";" if conteudo.count(";") >= conteudo.count(",") else ","
     leitor = csv.reader(io.StringIO(conteudo), delimiter=delimitador)
 
+    # Categorias custom do usuario tambem sao validas aqui -- sem isso um
+    # CSV com uma categoria criada na tela de orcamentos caia em "Outros".
+    categorias_validas = set(CATEGORIAS) | set(_orcamentos(supabase))
+
     novas = []
     for i, coluna in enumerate(leitor):
         if i == 0 or len(coluna) < 3:
@@ -1818,7 +1867,7 @@ def importar_csv(supabase):
         categoria = coluna[1].strip() if len(coluna) > 1 else "Outros"
         novas.append({
             "user_id": _uid(), "nome_despesa": nome, "descricao": "",
-            "categoria": categoria if categoria in CATEGORIAS else "Outros",
+            "categoria": categoria if categoria in categorias_validas else "Outros",
             "data": data_linha, "valor": valor,
             "tipo": "receita" if len(coluna) > 3 and coluna[3].strip() == "receita" else "despesa",
             "conta": coluna[4].strip() if len(coluna) > 4 else None,

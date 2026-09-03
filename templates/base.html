@@ -59,7 +59,6 @@
         <div class="dark-menu left up" style="width:100%">
           <div class="menu-label">Minha conta</div>
           <a href="{{ url_for('configuracoes', mes=mes_url) }}">{{ ic.usuario() }} Perfil</a>
-          <a href="{{ url_for('configuracoes', mes=mes_url) }}">{{ ic.escudo() }} Segurança</a>
           <div class="menu-separator"></div>
           <a class="destructive" href="{{ url_for('logout') }}">{{ ic.sair() }} Sair</a>
         </div>

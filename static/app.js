@@ -252,6 +252,43 @@
   $("#recorrente-conta")?.addEventListener("change", avisarRecorrenteNoCartao)
   avisarRecorrenteNoCartao()
 
+  // Nova recorrência x editar: mesmo modal, então precisa voltar ao
+  // estado "nova" sempre que abrir por esse botão -- senão fica com os
+  // dados da última edição.
+  const formRecorrente = $("#modal-recorrente form")
+  const prepararNovaRecorrente = () => {
+    if (!formRecorrente) return
+    formRecorrente.reset()
+    $("#rec-campo-id").value = ""
+    $("#titulo-recorrente").textContent = "Nova recorrência"
+    $("#rec-rotulo-salvar").textContent = "Criar recorrência"
+    definirTipoRecorrente("despesa")
+  }
+  $$("[data-nova-recorrente]").forEach((botao) => {
+    botao.addEventListener("click", prepararNovaRecorrente)
+  })
+
+  document.addEventListener("click", (evento) => {
+    const item = evento.target.closest("[data-editar-recorrente]")
+    if (!item || !formRecorrente) return
+
+    const d = item.dataset
+    $("#rec-campo-id").value = d.id
+    $("#rec-campo-nome").value = d.nome
+    $("#rec-campo-valor").value = String(d.valor).replace(".", ",")
+    $("#rec-campo-dia").value = d.dia
+    definirTipoRecorrente(d.tipo)
+    // definirTipoRecorrente já reconstrói as opções de categoria/conta
+    // pelo tipo -- os valores só entram depois disso, senão se perdem.
+    if ($("#rec-select-categoria")) $("#rec-select-categoria").value = d.categoria
+    if (d.conta && $("#recorrente-conta")) $("#recorrente-conta").value = d.conta
+    avisarRecorrenteNoCartao()
+
+    $("#titulo-recorrente").textContent = "Editar recorrência"
+    $("#rec-rotulo-salvar").textContent = "Salvar alterações"
+    abrir("modal-recorrente")
+  })
+
   /* ---------------------------------------------------------
      Fatura do cartão
      --------------------------------------------------------- */
@@ -481,11 +518,15 @@
   }
 
   if (!Reconhecimento) {
+    const AVISO_SEM_SUPORTE = "Disponível apenas em Chrome ou Edge — o navegador atual não tem essa API."
     botoesVoz.forEach((b) => {
       b.disabled = true
-      b.title = "Reconhecimento de voz não suportado neste navegador."
+      b.title = AVISO_SEM_SUPORTE
       if (b.id === "botao-voz-destaque") b.textContent = "Indisponível"
     })
+    // O texto do card fica visível sem precisar passar o mouse em cima.
+    const descricaoCard = $(".voice-feature-card p")
+    if (descricaoCard) descricaoCard.textContent = AVISO_SEM_SUPORTE
   } else {
     botoesVoz.forEach((b) => b.addEventListener("click", iniciarVoz))
   }

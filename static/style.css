@@ -394,6 +394,15 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .budget-list { margin-top: 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px 32px; }
 .budget-item { width: 100%; padding: 16px; border: 1px solid #1b1f23; border-radius: 11px; background: #080a0c; color: inherit; text-align: left; transition: 160ms ease; }
 .budget-item:hover { border-color: #285e39; background: #0a110d; transform: translateY(-1px); }
+.add-budget-item {
+  display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 9px;
+  min-height: 122px; padding: 16px; border: 1px dashed #24292e; border-radius: 11px;
+  color: #69717a; text-align: center; transition: 160ms ease;
+}
+.add-budget-item:hover { border-color: #275e39; color: #22c55e; background: #08100b; }
+.add-budget-item svg { width: 22px; height: 22px; }
+.add-budget-item strong { color: #cfd2d5; font-size: 12px; }
+.add-budget-item span { max-width: 220px; color: #69717a; font-size: 10px; line-height: 1.45; }
 .budget-row-title, .budget-row-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .budget-row-title { margin-bottom: 13px; }
 .budget-row-title > span { display: flex; align-items: center; gap: 9px; color: #d4d7da; font-size: 12px; font-weight: 600; }
@@ -495,10 +504,17 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .voice-feature-card button:hover:not(:disabled) { background: #0d2113; }
 .voice-feature-card button:disabled { opacity: .45; cursor: not-allowed; border-color: #24292e; color: #6d747d; }
 
-.voice-button { width: 44px; height: 44px; flex: 0 0 44px; border: 1px solid #24292e; border-radius: 9px; background: #0a0c0e; color: #8a9199; }
-.voice-button:hover:not(:disabled) { border-color: #23b754; color: #35d16a; }
-.voice-button.active { border-color: #23b754; background: #0d2113; color: #35d16a; animation: voice-pulse-ring 1.4s ease-in-out infinite; }
-.voice-button:disabled { opacity: .4; cursor: not-allowed; }
+/* .chat-input .voice-button (2 classes) pra vencer ".chat-input button" em
+   especificidade -- senão o botão de enviar (verde solido) vaza pro microfone. */
+.chat-input .voice-button { border: 1px solid #24292e; background: #0a0c0e; color: #8a9199; }
+.chat-input .voice-button:hover:not(:disabled) { border-color: #23b754; background: #0d1712; color: #35d16a; }
+.chat-input .voice-button.active { border-color: #23b754; background: #0d2113; color: #35d16a; animation: voice-pulse-ring 1.4s ease-in-out infinite; }
+.chat-input .voice-button:disabled { border-color: #24292e; background: #0a0c0e; color: #565c64; opacity: .55; cursor: not-allowed; }
+.voice-button { width: 44px; height: 44px; flex: 0 0 44px; border-radius: 9px; }
+/* Sem isso o svg do microfone fica sem largura definida e renderiza
+   enorme (tamanho intrinseco do navegador) -- os outros ícones da tela
+   sempre têm essa regra, esse aqui tinha ficado de fora. */
+.voice-button svg { width: 18px; height: 18px; }
 @keyframes voice-pulse-ring { 0%, 100% { box-shadow: 0 0 0 0 #22c55e40; } 50% { box-shadow: 0 0 0 6px #22c55e00; } }
 
 .voice-capture { max-width: 90%; padding: 14px 16px; border: 1px solid #1b2f22; border-radius: 4px 14px 14px 14px; background: #0a120d; animation: modal-in .2s ease both; }

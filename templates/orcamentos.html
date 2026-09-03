@@ -26,6 +26,12 @@
         </div>
       </button>
       {% endfor %}
+
+      <button class="surface add-budget-item" type="button" data-abrir="modal-nova-categoria">
+        {{ ic.mais() }}
+        <strong>Nova categoria</strong>
+        <span>Crie uma categoria e defina o limite mensal dela</span>
+      </button>
     </div>
   </section>
 </div>
@@ -48,6 +54,29 @@
     <div class="modal-footer">
       <button type="button" class="btn" data-fechar>Cancelar</button>
       <button type="submit" class="btn primary-button">Salvar limite</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal narrow" id="modal-nova-categoria">
+  <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
+  <div class="modal-header">
+    <h2>Nova categoria</h2>
+    <p>Ela já entra nas opções ao lançar uma transação ou recorrência.</p>
+  </div>
+  <form class="simple-form" method="POST" action="{{ url_for('salvar_orcamento') }}">
+    <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <label class="field">
+      <span>Nome da categoria</span>
+      <input class="input" name="categoria" required maxlength="30" placeholder="Ex.: Pets, Saúde, Educação">
+    </label>
+    <label class="field">
+      <span>Limite mensal</span>
+      <input class="input" name="limite" inputmode="decimal" required placeholder="R$ 0,00">
+    </label>
+    <div class="modal-footer">
+      <button type="button" class="btn" data-fechar>Cancelar</button>
+      <button type="submit" class="btn primary-button">Criar categoria</button>
     </div>
   </form>
 </dialog>

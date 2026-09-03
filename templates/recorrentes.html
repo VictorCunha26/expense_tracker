@@ -9,7 +9,7 @@
         <h2>Lançamentos recorrentes</h2>
         <p>Entram sozinhos em Transações quando o dia chega. Pausar interrompe sem apagar o histórico.</p>
       </div>
-      <button class="btn primary-button" data-abrir="modal-recorrente">{{ ic.mais() }} Nova recorrência</button>
+      <button class="btn primary-button" data-nova-recorrente data-abrir="modal-recorrente">{{ ic.mais() }} Nova recorrência</button>
     </div>
 
     {% if recorrentes %}
@@ -56,6 +56,11 @@
               <span></span>
             </label>
           </form>
+          <button type="button" class="btn btn-ghost btn-icon" data-editar-recorrente
+                  data-id="{{ r.id }}" data-nome="{{ r.nome }}" data-categoria="{{ r.categoria }}"
+                  data-valor="{{ r.valor }}" data-dia="{{ r.dia or 1 }}" data-conta="{{ r.conta or '' }}"
+                  data-tipo="{{ 'receita' if r.receita else 'despesa' }}"
+                  aria-label="Editar {{ r.nome }}">{{ ic.lapis() }}</button>
           <button type="button" class="btn btn-ghost btn-icon" data-excluir
                   data-acao="{{ url_for('deletar_recorrente') }}" data-campo="id" data-id="{{ r.id }}"
                   data-titulo="Remover esta recorrência?"
@@ -80,11 +85,12 @@
 <dialog class="modal narrow" id="modal-recorrente">
   <button class="btn btn-ghost btn-icon modal-close" data-fechar aria-label="Fechar">{{ ic.fechar() }}</button>
   <div class="modal-header">
-    <h2>Nova recorrência</h2>
+    <h2 id="titulo-recorrente">Nova recorrência</h2>
     <p>Cadastre uma cobrança que se repete todos os meses.</p>
   </div>
   <form class="simple-form" method="POST" action="{{ url_for('salvar_recorrente') }}">
     <input type="hidden" name="origem" value="{{ request.full_path }}">
+    <input type="hidden" name="id" id="rec-campo-id">
     <input type="hidden" name="tipo" id="rec-tipo" value="despesa">
 
     <div class="type-toggle">
@@ -94,11 +100,11 @@
 
     <label class="field">
       <span>Nome</span>
-      <input class="input" name="nome" required placeholder="Ex.: Netflix">
+      <input class="input" name="nome" id="rec-campo-nome" required placeholder="Ex.: Netflix">
     </label>
     <label class="field" id="rec-campo-categoria">
       <span>Categoria</span>
-      <select class="input" name="categoria">
+      <select class="input" name="categoria" id="rec-select-categoria">
         {% for c in categorias_despesa %}
           <option value="{{ c }}" {{ 'selected' if c == 'Assinaturas' }}>{{ c }}</option>
         {% endfor %}
@@ -107,11 +113,11 @@
     <div class="form-grid">
       <label class="field">
         <span>Valor mensal</span>
-        <input class="input" name="valor" inputmode="decimal" required placeholder="0,00">
+        <input class="input" name="valor" id="rec-campo-valor" inputmode="decimal" required placeholder="0,00">
       </label>
       <label class="field">
         <span>Dia do mês</span>
-        <input class="input" type="number" name="dia" min="1" max="28" value="5">
+        <input class="input" type="number" name="dia" id="rec-campo-dia" min="1" max="28" value="5">
       </label>
     </div>
 
@@ -142,7 +148,7 @@
     </p>
     <div class="modal-footer">
       <button type="button" class="btn" data-fechar>Cancelar</button>
-      <button type="submit" class="btn primary-button">Criar recorrência</button>
+      <button type="submit" class="btn primary-button"><span id="rec-rotulo-salvar">Criar recorrência</span></button>
     </div>
   </form>
 </dialog>
