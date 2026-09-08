@@ -293,12 +293,7 @@ def _minigrafico(valores, largura=132, altura=52, pad=5):
 # a pessoa entende e sabe o que fazer, em vez do texto cru da API (tipo
 # "email rate limit exceeded").
 _MENSAGENS_AUTH = {
-    "over_email_send_rate_limit": (
-        "O Supabase limitou o envio de e-mails deste projeto por agora. "
-        "Espere alguns minutos e tente de novo. Se isso continuar acontecendo, "
-        "configure um servidor de e-mail (SMTP) próprio em Authentication → "
-        "Emails no painel do Supabase -- o limite do e-mail padrão dele é bem baixo."
-    ),
+    "over_email_send_rate_limit": "Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.",
     "email_exists": "Já existe uma conta com esse e-mail.",
     "user_already_exists": "Já existe uma conta com esse e-mail.",
     "weak_password": "Essa senha é fraca demais; use pelo menos 6 caracteres.",
