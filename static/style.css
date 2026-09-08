@@ -449,6 +449,29 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .chart-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 
 /* ---------------------------------------------------------
+   Assinatura (paywall do Assistente)
+   --------------------------------------------------------- */
+
+.paywall-card { max-width: 520px; margin: 30px auto; padding: 38px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.paywall-icon {
+  width: 56px; height: 56px; display: grid; place-items: center; border: 1px solid #1d4d2b;
+  border-radius: 16px; color: #35d16a; background: radial-gradient(circle at 35% 25%, #1e6836, #0c1d12 65%);
+  box-shadow: 0 0 50px #16a34a24;
+}
+.paywall-icon svg { width: 25px; }
+.paywall-card h2 { max-width: 380px; margin: 14px 0 12px; font-size: 26px; line-height: 1.2; letter-spacing: -.03em; }
+.paywall-card > p { max-width: 420px; margin: 0; color: #9aa0a8; font-size: 13px; line-height: 1.7; }
+.paywall-price { display: flex; align-items: baseline; gap: 5px; margin: 26px 0 20px; }
+.paywall-price strong { color: #f4f5f6; font-size: 40px; letter-spacing: -.04em; }
+.paywall-price span { color: #7b828b; font-size: 13px; }
+.paywall-features { width: 100%; max-width: 360px; margin: 0 0 28px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 13px; text-align: left; }
+.paywall-features li { display: flex; align-items: center; gap: 10px; color: #cdd2d7; font-size: 12px; }
+.paywall-features svg { width: 16px; height: 16px; flex: 0 0 16px; color: #22c55e; }
+.paywall-button { width: 100%; max-width: 320px; height: 48px; font-size: 13px; }
+.paywall-button:disabled { opacity: .55; cursor: not-allowed; }
+.paywall-card .assistant-disclaimer { margin-top: 12px; }
+
+/* ---------------------------------------------------------
    Assistente
    --------------------------------------------------------- */
 

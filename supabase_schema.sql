@@ -162,6 +162,21 @@ create table if not exists public.preferencias (
 );
 
 
+-- ------------------------------------------------------------
+-- 7b) assinaturas (acesso pago ao Assistente financeiro).
+--     So o webhook da Cakto escreve aqui, com a service_role key
+--     (que ignora RLS) -- por isso essa tabela NAO entra na policy
+--     generica "tudo" la embaixo. O usuario so pode ler a propria linha.
+-- ------------------------------------------------------------
+create table if not exists public.assinaturas (
+  user_id       uuid    primary key references auth.users (id) on delete cascade,
+  ativa         boolean not null default false,
+  cakto_evento  text,
+  cakto_id      text,
+  atualizada_em timestamptz not null default now()
+);
+
+
 -- ============================================================
 -- 8) RLS: cada usuario so enxerga as proprias linhas.
 --    Sem isso, qualquer usuario logado le os dados de todos.
@@ -173,6 +188,7 @@ alter table public.recorrentes  enable row level security;
 alter table public.metas        enable row level security;
 alter table public.faturas      enable row level security;
 alter table public.preferencias enable row level security;
+alter table public.assinaturas  enable row level security;
 
 -- Uma policy "tudo" por tabela: le/insere/edita/apaga apenas o proprio dado.
 do $$
@@ -188,6 +204,13 @@ begin
     );
   end loop;
 end $$;
+
+-- assinaturas e diferente: o usuario so LE a propria linha. Escrever quem
+-- e assinante e o webhook da Cakto (service_role), nunca o proprio usuario
+-- -- senao qualquer um se marcaria como assinante sem pagar nada.
+drop policy if exists assinaturas_leitura on public.assinaturas;
+create policy assinaturas_leitura on public.assinaturas
+  for select to authenticated using (auth.uid() = user_id);
 
 
 -- ============================================================

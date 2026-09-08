@@ -1,11 +1,14 @@
 import csv
+import hashlib
+import hmac
 import io
 import math
 import os
 import unicodedata
+import urllib.parse
 import uuid
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from functools import wraps
 
 from flask import (
@@ -14,7 +17,22 @@ from flask import (
 from supabase import AuthApiError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from connection import conectar, conectar_como_usuario, renovar_sessao
+from connection import conectar, conectar_admin, conectar_como_usuario, renovar_sessao
+
+CAKTO_WEBHOOK_SECRET = os.getenv("CAKTO_WEBHOOK_SECRET")
+CAKTO_CHECKOUT_URL = os.getenv("CAKTO_CHECKOUT_URL")
+
+# Quais eventos da Cakto ligam ou desligam o acesso ao Assistente. Um
+# evento fora dessas duas listas (ex.: pix_gerado, checkout_abandonment)
+# e ignorado -- ainda nao virou pagamento nem cancelamento de nada.
+CAKTO_EVENTOS_ATIVA = {
+    "purchase_approved", "subscription_created",
+    "subscription_renewed", "subscription_resumed",
+}
+CAKTO_EVENTOS_INATIVA = {
+    "subscription_canceled", "subscription_renewal_refused",
+    "subscription_paused", "refund", "chargeback", "purchase_refused",
+}
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
@@ -1782,9 +1800,41 @@ def relatorios(supabase):
 # transacoes do mes e responde sobre o que ja esta no banco.
 # ------------------------------------------------------------------
 
+def _assinante(supabase):
+    """True se o usuario tem assinatura ativa do Assistente financeiro.
+    So o webhook da Cakto grava essa linha -- ver _MENSAGENS_AUTH acima
+    e a secao 'Cakto' mais abaixo."""
+    try:
+        linha = (
+            supabase.table("assinaturas").select("ativa")
+            .eq("user_id", _uid()).execute().data
+        )
+    except Exception:
+        return False
+    return bool(linha and linha[0].get("ativa"))
+
+
+def _link_assinatura_cakto():
+    """Link de checkout com o e-mail da conta ja preenchido, pra o
+    pagamento bater certinho com a conta na hora do webhook."""
+    if not CAKTO_CHECKOUT_URL:
+        return None
+    email = session.get("email") or ""
+    if not email:
+        return CAKTO_CHECKOUT_URL
+    separador = "&" if "?" in CAKTO_CHECKOUT_URL else "?"
+    query = urllib.parse.urlencode({"email": email, "confirmEmail": email})
+    return f"{CAKTO_CHECKOUT_URL}{separador}{query}"
+
+
 @app.route("/assistente", methods=["GET", "POST"])
 @com_supabase
 def assistente(supabase):
+    if not _assinante(supabase):
+        contexto = _contexto_base(supabase, "assistant")
+        contexto["link_assinatura"] = _link_assinatura_cakto()
+        return render_template("assinatura.html", **contexto)
+
     todas = _transacoes(supabase)
     do_mes = _do_mes(todas, _mes_selecionado())
     limites = _orcamentos(supabase)
@@ -1875,6 +1925,94 @@ def _responder(pergunta, gasto, orcamento, maior, qtd, metas_usuario):
 def limpar_conversa():
     session.pop("conversa", None)
     return redirect(url_for("assistente"))
+
+
+# ------------------------------------------------------------------
+# Cakto: webhook que libera/cancela a assinatura do Assistente
+#
+# A Cakto chama essa rota direto do servidor dela (nao do navegador de
+# ninguem), entao nao tem sessao de login aqui -- so da pra confiar no
+# pedido depois de validar a assinatura HMAC (ou o "secret" no corpo,
+# como fallback). Documentacao: https://docs.cakto.com.br/conceitos/webhooks
+# ------------------------------------------------------------------
+
+def _cakto_assinatura_valida(corpo_bruto, timestamp, assinatura_recebida):
+    """HMAC-SHA256 de '{timestamp}.{corpo}' usando o secret do webhook.
+    E o metodo recomendado pela Cakto pra garantir que o pedido veio
+    mesmo de la (sem isso, qualquer um poderia chamar essa rota e se
+    liberar como assinante de graca)."""
+    if not (CAKTO_WEBHOOK_SECRET and timestamp and assinatura_recebida):
+        return False
+    mensagem = f"{timestamp}.{corpo_bruto.decode('utf-8')}"
+    esperada = hmac.new(
+        CAKTO_WEBHOOK_SECRET.encode(), mensagem.encode(), hashlib.sha256
+    ).hexdigest()
+    recebida = assinatura_recebida.split("=", 1)[-1]  # tira o prefixo "v1="
+    return hmac.compare_digest(esperada, recebida)
+
+
+def _achar_usuario_por_email(admin, email):
+    """Nao tem 'buscar por e-mail' no client do Supabase -- so listar
+    paginado. Pro tamanho deste app (nao um SaaS com milhares de contas)
+    isso e suficiente; o limite de paginas e so pra nunca rodar pra sempre."""
+    pagina, por_pagina = 1, 200
+    while pagina <= 20:
+        usuarios = admin.auth.admin.list_users(page=pagina, per_page=por_pagina)
+        if not usuarios:
+            return None
+        for usuario in usuarios:
+            if (usuario.email or "").strip().lower() == email:
+                return usuario
+        if len(usuarios) < por_pagina:
+            return None
+        pagina += 1
+    return None
+
+
+@app.route("/webhooks/cakto", methods=["POST"])
+def webhook_cakto():
+    corpo_bruto = request.get_data()
+    payload = request.get_json(silent=True) or {}
+
+    valido = _cakto_assinatura_valida(
+        corpo_bruto,
+        request.headers.get("X-Cakto-Timestamp"),
+        request.headers.get("X-Cakto-Signature"),
+    )
+    if not valido and CAKTO_WEBHOOK_SECRET:
+        # Segundo metodo que a Cakto aceita: o campo "secret" no corpo
+        # batendo com o nosso, comparado sem vazar tempo de execucao.
+        valido = hmac.compare_digest(
+            str(payload.get("secret") or ""), CAKTO_WEBHOOK_SECRET
+        )
+    if not valido:
+        return "assinatura invalida", 401
+
+    evento = payload.get("event")
+    dados = payload.get("data") or {}
+    if evento not in (CAKTO_EVENTOS_ATIVA | CAKTO_EVENTOS_INATIVA):
+        return "", 200  # evento que nao muda nada aqui (ex.: pix_gerado)
+
+    email = ((dados.get("customer") or {}).get("email") or "").strip().lower()
+    admin = conectar_admin()
+    if not email or admin is None:
+        return "", 200
+
+    usuario = _achar_usuario_por_email(admin, email)
+    if not usuario:
+        # Pagou mas ainda nao tem conta no app (ou usou outro e-mail no
+        # checkout) -- nao tem em quem marcar a assinatura ainda.
+        return "", 200
+
+    admin.table("assinaturas").upsert({
+        "user_id": usuario.id,
+        "ativa": evento in CAKTO_EVENTOS_ATIVA,
+        "cakto_evento": evento,
+        "cakto_id": dados.get("id"),
+        "atualizada_em": datetime.utcnow().isoformat(),
+    }).execute()
+
+    return "", 200
 
 
 # ------------------------------------------------------------------

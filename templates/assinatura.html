@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "icones.html" as ic %}
+
+{% block conteudo %}
+<div class="view-stack">
+  <section class="surface paywall-card">
+    <div class="paywall-icon">{{ ic.brilho() }}</div>
+    <span class="eyebrow">Recurso premium</span>
+    <h2>Desbloqueie o Assistente financeiro</h2>
+    <p>
+      Insights automáticos sobre seus gastos, perguntas ilimitadas sobre suas finanças
+      e o Synch Voice para lançar transações falando — tudo calculado em cima dos
+      seus próprios dados.
+    </p>
+
+    <div class="paywall-price">
+      <strong>R$ 19,90</strong><span>/mês</span>
+    </div>
+
+    <ul class="paywall-features">
+      <li>{{ ic.check() }} Análise automática de onde você mais gasta</li>
+      <li>{{ ic.check() }} Chat ilimitado sobre orçamento, metas e economia</li>
+      <li>{{ ic.check() }} Synch Voice: adicione transações só falando</li>
+      <li>{{ ic.check() }} Cancele quando quiser, direto na Cakto</li>
+    </ul>
+
+    {% if link_assinatura %}
+      <a class="btn primary-button paywall-button" href="{{ link_assinatura }}" target="_blank" rel="noopener">
+        {{ ic.cadeado() }} Assinar agora
+      </a>
+      <small class="assistant-disclaimer">Pagamento processado pela Cakto. Após confirmado, o acesso libera automaticamente.</small>
+    {% else %}
+      <button class="btn paywall-button" type="button" disabled>Assinatura indisponível no momento</button>
+      <small class="assistant-disclaimer">Volte em breve — estamos finalizando a configuração do pagamento.</small>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
