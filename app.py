@@ -11,11 +11,18 @@ from functools import wraps
 from flask import (
     Flask, Response, flash, redirect, render_template, request, session, url_for
 )
+from supabase import AuthApiError
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from connection import conectar, conectar_como_usuario, renovar_sessao
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
+
+# Atras do proxy da Vercel a requisicao chega em HTTP por dentro; sem isso
+# url_for(..., _external=True) gera link com "http://" mesmo em producao --
+# e ai o link de redefinir senha nem bate com o cadastrado no Supabase.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 MESES_PT = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -281,6 +288,27 @@ def _minigrafico(valores, largura=132, altura=52, pad=5):
 # ------------------------------------------------------------------
 # Sessao / Supabase
 # ------------------------------------------------------------------
+
+# Traduz os codigos de erro mais comuns do Supabase Auth pra uma frase que
+# a pessoa entende e sabe o que fazer, em vez do texto cru da API (tipo
+# "email rate limit exceeded").
+_MENSAGENS_AUTH = {
+    "over_email_send_rate_limit": (
+        "O Supabase limitou o envio de e-mails deste projeto por agora. "
+        "Espere alguns minutos e tente de novo. Se isso continuar acontecendo, "
+        "configure um servidor de e-mail (SMTP) próprio em Authentication → "
+        "Emails no painel do Supabase -- o limite do e-mail padrão dele é bem baixo."
+    ),
+    "email_exists": "Já existe uma conta com esse e-mail.",
+    "user_already_exists": "Já existe uma conta com esse e-mail.",
+    "weak_password": "Essa senha é fraca demais; use pelo menos 6 caracteres.",
+}
+
+
+def _mensagem_erro_auth(erro):
+    codigo = getattr(erro, "code", None)
+    return _MENSAGENS_AUTH.get(codigo, f"Não foi possível concluir: {erro}")
+
 
 def obter_supabase():
     """Retorna um cliente autenticado, renovando o token se estiver expirado."""
@@ -805,7 +833,7 @@ def cadastro():
         try:
             supabase.auth.sign_up({"email": email, "password": senha})
         except Exception as erro:
-            flash(f"Não foi possível criar a conta: {erro}")
+            flash(_mensagem_erro_auth(erro))
             return redirect(url_for("cadastro"))
 
         flash("Conta criada! Verifique seu e-mail para confirmar antes de entrar.")
@@ -822,8 +850,14 @@ def esqueci_senha():
             supabase = conectar()
             try:
                 supabase.auth.reset_password_for_email(
-                    email, {"redirect_to": url_for("login", _external=True)}
+                    email, {"redirect_to": url_for("redefinir_senha", _external=True)}
                 )
+            except AuthApiError as erro:
+                # O limite de envio e por projeto, nao por conta -- avisar
+                # disso nao revela se o e-mail digitado existe ou nao.
+                if erro.code == "over_email_send_rate_limit":
+                    flash(_mensagem_erro_auth(erro))
+                    return redirect(url_for("esqueci_senha"))
             except Exception:
                 pass  # nao revela se o e-mail existe ou nao
 
@@ -833,6 +867,70 @@ def esqueci_senha():
         return redirect(url_for("login"))
 
     return render_template("esqueci_senha.html")
+
+
+@app.route("/redefinir-senha", methods=["GET", "POST"])
+def redefinir_senha():
+    """Segunda metade do 'esqueci minha senha': o link do e-mail cai aqui
+    com o token de recuperacao no fragmento da URL (#access_token=...),
+    que o navegador nunca manda pro servidor -- por isso o template le
+    esse fragmento com JS e joga num campo oculto do formulario antes
+    de enviar. Com o token em maos, a senha e trocada de verdade no
+    Supabase Auth (nao e so uma tela bonita)."""
+    if request.method == "POST":
+        access_token = request.form.get("access_token")
+        refresh_token = request.form.get("refresh_token") or ""
+        senha = request.form.get("senha") or ""
+        confirmar = request.form.get("confirmar_senha") or ""
+
+        if not access_token:
+            flash("Link inválido ou expirado. Solicite a redefinição novamente.")
+            return redirect(url_for("esqueci_senha"))
+
+        erro = None
+        if len(senha) < 6:
+            erro = "A nova senha precisa ter pelo menos 6 caracteres."
+        elif senha != confirmar:
+            erro = "As senhas não são iguais."
+
+        if erro:
+            flash(erro)
+            # Re-renderiza com o token de volta no campo oculto -- um
+            # redirect aqui perderia o fragmento da URL e o usuario
+            # teria que clicar no link do e-mail de novo.
+            return render_template(
+                "redefinir_senha.html", access_token=access_token, refresh_token=refresh_token
+            )
+
+        supabase = conectar()
+        try:
+            supabase.auth.set_session(access_token, refresh_token)
+            supabase.auth.update_user({"password": senha})
+        except Exception:
+            flash("Não foi possível atualizar a senha. O link pode ter expirado — solicite um novo.")
+            return redirect(url_for("esqueci_senha"))
+
+        flash("Senha atualizada! Faça login com a nova senha.")
+        return redirect(url_for("login"))
+
+    # Alguns projetos Supabase mandam o link de recuperacao como
+    # "?code=..." (fluxo PKCE) em vez de "#access_token=..." no
+    # fragmento. O "code" chega pro servidor (e o fragmento nao), entao
+    # da pra trocar por uma sessao aqui mesmo antes de montar a tela.
+    codigo = request.args.get("code")
+    if codigo:
+        supabase = conectar()
+        try:
+            resposta = supabase.auth.exchange_code_for_session({"auth_code": codigo})
+            return render_template(
+                "redefinir_senha.html",
+                access_token=resposta.session.access_token,
+                refresh_token=resposta.session.refresh_token,
+            )
+        except Exception:
+            pass  # cai no formulario normal, que mostra "link invalido"
+
+    return render_template("redefinir_senha.html")
 
 
 @app.route("/logout")
