@@ -163,18 +163,23 @@ create table if not exists public.preferencias (
 
 
 -- ------------------------------------------------------------
--- 7b) assinaturas (acesso pago ao Assistente financeiro).
+-- 7b) assinaturas (plano do usuario: gratis / synch_ia).
 --     So o webhook da Cakto escreve aqui, com a service_role key
 --     (que ignora RLS) -- por isso essa tabela NAO entra na policy
 --     generica "tudo" la embaixo. O usuario so pode ler a propria linha.
 -- ------------------------------------------------------------
 create table if not exists public.assinaturas (
   user_id       uuid    primary key references auth.users (id) on delete cascade,
-  ativa         boolean not null default false,
+  plano         text    not null default 'gratis',
   cakto_evento  text,
   cakto_id      text,
   atualizada_em timestamptz not null default now()
 );
+
+do $$ begin
+  alter table public.assinaturas add constraint assinaturas_plano_check
+    check (plano in ('gratis', 'synch_ia'));
+exception when duplicate_object then null; end $$;
 
 
 -- ============================================================

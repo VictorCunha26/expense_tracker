@@ -20,11 +20,35 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from connection import conectar, conectar_admin, conectar_como_usuario, renovar_sessao
 
 CAKTO_WEBHOOK_SECRET = os.getenv("CAKTO_WEBHOOK_SECRET")
-CAKTO_CHECKOUT_URL = os.getenv("CAKTO_CHECKOUT_URL")
 
-# Quais eventos da Cakto ligam ou desligam o acesso ao Assistente. Um
-# evento fora dessas duas listas (ex.: pix_gerado, checkout_abandonment)
-# e ignorado -- ainda nao virou pagamento nem cancelamento de nada.
+# So existe um plano pago (Synch IA, com tudo -- contas ilimitadas,
+# parcelas/recorrencias, relatorios completos, importacao E o Assistente
+# por texto e voz). O link de checkout reaproveita o produto que ja
+# existia como "Basico" na Cakto (R$ 149,90/ano).
+CAKTO_PLANOS = {
+    "synch_ia": {
+        "oferta_id": "syw8q2x",
+        "checkout_url": "https://pay.cakto.com.br/syw8q2x",
+        "nome": "Synch IA",
+        "preco": "R$ 149,90/ano",
+        "preco_mes": "R$ 12,49/mês",
+    },
+}
+# As duas ofertas que ja foram criadas na Cakto (a antiga "Synch IA" a
+# R$349,90 inclusa) apontam pro mesmo plano unico -- assim quem ja
+# comprou por qualquer uma delas continua com acesso completo.
+CAKTO_OFERTA_PARA_PLANO = {
+    "syw8q2x": "synch_ia",
+    "psh8aeu_1097259": "synch_ia",
+}
+
+# Ordem dos planos, pra comparar "esse usuario tem plano suficiente pra
+# isso" com um simples >=.
+PLANOS_ORDEM = {"gratis": 0, "synch_ia": 1}
+
+# Quais eventos da Cakto ligam ou desligam a assinatura. Um evento fora
+# dessas duas listas (ex.: pix_gerado, checkout_abandonment) e ignorado --
+# ainda nao virou pagamento nem cancelamento de nada.
 CAKTO_EVENTOS_ATIVA = {
     "purchase_approved", "subscription_created",
     "subscription_renewed", "subscription_resumed",
@@ -33,6 +57,12 @@ CAKTO_EVENTOS_INATIVA = {
     "subscription_canceled", "subscription_renewal_refused",
     "subscription_paused", "refund", "chargeback", "purchase_refused",
 }
+
+# Limites do plano Gratis. Synch IA nao tem limite em nenhum desses.
+LIMITE_GRATIS_CONTAS = 1
+LIMITE_GRATIS_CARTOES = 1
+LIMITE_GRATIS_TRANSACOES_MES = 100
+LIMITE_GRATIS_METAS = 1
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
@@ -91,6 +121,7 @@ TITULOS = {
     "reports": ("Relatórios", "Entenda a evolução do seu dinheiro"),
     "assistant": ("Assistente financeiro", "Insights calculados pelos seus dados"),
     "settings": ("Configurações", "Gerencie seu perfil e preferências"),
+    "plans": ("Planos", "Escolha o plano que combina com você"),
 }
 
 
@@ -323,6 +354,50 @@ def _mensagem_erro_auth(erro):
     return _MENSAGENS_AUTH.get(codigo, f"Não foi possível concluir: {erro}")
 
 
+# ------------------------------------------------------------------
+# Planos (Gratis / Synch IA)
+# ------------------------------------------------------------------
+
+def _plano_usuario(supabase):
+    """'gratis' ou 'synch_ia'. So o webhook da Cakto grava essa
+    linha (ver secao 'Cakto' mais abaixo) -- 'gratis' e o padrao pra
+    quem nunca assinou nada."""
+    try:
+        linha = (
+            supabase.table("assinaturas").select("plano")
+            .eq("user_id", _uid()).execute().data
+        )
+    except Exception:
+        return "gratis"
+    plano = (linha[0].get("plano") if linha else None) or "gratis"
+    return plano if plano in PLANOS_ORDEM else "gratis"
+
+
+def _plano_permite(plano_usuario, plano_minimo):
+    return PLANOS_ORDEM.get(plano_usuario, 0) >= PLANOS_ORDEM.get(plano_minimo, 0)
+
+
+def _link_assinatura(plano):
+    """Link de checkout com o e-mail da conta ja preenchido, pra o
+    pagamento bater certinho com a conta na hora do webhook."""
+    info = CAKTO_PLANOS.get(plano)
+    if not info:
+        return None
+    email = session.get("email") or ""
+    if not email:
+        return info["checkout_url"]
+    query = urllib.parse.urlencode({"email": email, "confirmEmail": email})
+    return f"{info['checkout_url']}?{query}"
+
+
+def _bloquear_por_plano(motivo):
+    """Usa isso quando uma acao (salvar conta, meta, importar...) esbarra
+    no limite do plano atual -- manda pra tela de planos com o motivo,
+    em vez de so recusar sem explicar."""
+    flash(motivo)
+    return redirect(url_for("planos", motivo=motivo))
+
+
 def obter_supabase():
     """Retorna um cliente autenticado, renovando o token se estiver expirado."""
     supabase = conectar_como_usuario(session["access_token"])
@@ -441,6 +516,18 @@ def com_supabase(f):
 
 def _uid():
     return session["user_id"]
+
+
+@app.route("/planos")
+@com_supabase
+def planos(supabase):
+    contexto = _contexto_base(supabase, "plans")
+    contexto.update({
+        "plano_atual": _plano_usuario(supabase),
+        "link_synch_ia": _link_assinatura("synch_ia"),
+        "motivo": request.args.get("motivo"),
+    })
+    return render_template("planos.html", **contexto)
 
 
 # ------------------------------------------------------------------
@@ -1158,6 +1245,27 @@ def salvar_transacao(supabase):
         "recorrente": request.form.get("recorrente") == "on",
     }
 
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        if parcelas > 1:
+            return _bloquear_por_plano(
+                "Parcelar uma compra é um recurso do plano Synch IA. Assine para dividir em várias vezes."
+            )
+        if campos["recorrente"]:
+            return _bloquear_por_plano(
+                "Repetir uma transação todo mês é um recurso do plano Synch IA. Assine para automatizar lançamentos fixos."
+            )
+        if not id_transacao:
+            mes_lancamento = (data_base or "")[:7]
+            no_mes = sum(
+                1 for t in _transacoes(supabase)
+                if (t.get("data") or "")[:7] == mes_lancamento
+            )
+            if no_mes >= LIMITE_GRATIS_TRANSACOES_MES:
+                return _bloquear_por_plano(
+                    f"O plano Grátis permite até {LIMITE_GRATIS_TRANSACOES_MES} movimentações por mês. "
+                    "Assine o Synch IA para lançar sem limite."
+                )
+
     if id_transacao:
         supabase.table("despesas").update({**campos, "valor": total, "data": data_base}) \
             .eq("id", id_transacao).eq("user_id", _uid()).execute()
@@ -1389,6 +1497,23 @@ def salvar_conta(supabase):
         return _voltar()
 
     tipo = request.form.get("tipo") or "Conta corrente"
+
+    # So conta contra o limite quando esta CRIANDO (editar uma conta que
+    # ja existe nunca deveria travar por causa de um limite de plano).
+    if not id_conta and not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        existentes = _contas(supabase)
+        cartoes = sum(1 for c in existentes if c.get("tipo") == "Cartão de crédito")
+        outras = len(existentes) - cartoes
+        estourou = (
+            (tipo == "Cartão de crédito" and cartoes >= LIMITE_GRATIS_CARTOES)
+            or (tipo != "Cartão de crédito" and outras >= LIMITE_GRATIS_CONTAS)
+        )
+        if estourou:
+            return _bloquear_por_plano(
+                f"O plano Grátis permite {LIMITE_GRATIS_CONTAS} conta e {LIMITE_GRATIS_CARTOES} "
+                "cartão. Assine o Synch IA para ter contas e cartões ilimitados."
+            )
+
     campos = {
         "nome": nome,
         "tipo": tipo,
@@ -1572,6 +1697,12 @@ def salvar_orcamento(supabase):
     )
     categoria = existente or categoria
 
+    if not existente and not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return _bloquear_por_plano(
+            "Criar uma categoria de orçamento nova é um recurso do plano Synch IA. "
+            "Assine para ter orçamentos ilimitados."
+        )
+
     supabase.table("orcamentos").upsert(
         {"user_id": _uid(), "categoria": categoria, "limite": limite},
         on_conflict="user_id,categoria",
@@ -1643,6 +1774,11 @@ def salvar_recorrente(supabase):
         flash("Preencha os dados da recorrência.")
         return _voltar()
 
+    if not id_recorrente and not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return _bloquear_por_plano(
+            "Criar uma recorrência é um recurso do plano Synch IA. Assine para automatizar lançamentos fixos."
+        )
+
     tipo = "receita" if request.form.get("tipo") == "receita" else "despesa"
     campos = {
         "nome": nome,
@@ -1711,6 +1847,13 @@ def salvar_meta(supabase):
         flash("Preencha os dados da meta.")
         return _voltar()
 
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        if len(_metas(supabase)) >= LIMITE_GRATIS_METAS:
+            return _bloquear_por_plano(
+                f"O plano Grátis permite {LIMITE_GRATIS_METAS} meta financeira. "
+                "Assine o Synch IA para ter metas ilimitadas."
+            )
+
     supabase.table("metas").insert({
         "user_id": _uid(), "nome": nome,
         "guardado": _numero(request.form.get("guardado")),
@@ -1759,6 +1902,11 @@ def deletar_meta(supabase):
 @app.route("/relatorios")
 @com_supabase
 def relatorios(supabase):
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return redirect(url_for(
+            "planos", motivo="Os relatórios completos são um recurso do plano Synch IA."
+        ))
+
     todas = _transacoes(supabase)
 
     # Seis meses terminando no mes selecionado.
@@ -1800,40 +1948,13 @@ def relatorios(supabase):
 # transacoes do mes e responde sobre o que ja esta no banco.
 # ------------------------------------------------------------------
 
-def _assinante(supabase):
-    """True se o usuario tem assinatura ativa do Assistente financeiro.
-    So o webhook da Cakto grava essa linha -- ver _MENSAGENS_AUTH acima
-    e a secao 'Cakto' mais abaixo."""
-    try:
-        linha = (
-            supabase.table("assinaturas").select("ativa")
-            .eq("user_id", _uid()).execute().data
-        )
-    except Exception:
-        return False
-    return bool(linha and linha[0].get("ativa"))
-
-
-def _link_assinatura_cakto():
-    """Link de checkout com o e-mail da conta ja preenchido, pra o
-    pagamento bater certinho com a conta na hora do webhook."""
-    if not CAKTO_CHECKOUT_URL:
-        return None
-    email = session.get("email") or ""
-    if not email:
-        return CAKTO_CHECKOUT_URL
-    separador = "&" if "?" in CAKTO_CHECKOUT_URL else "?"
-    query = urllib.parse.urlencode({"email": email, "confirmEmail": email})
-    return f"{CAKTO_CHECKOUT_URL}{separador}{query}"
-
-
 @app.route("/assistente", methods=["GET", "POST"])
 @com_supabase
 def assistente(supabase):
-    if not _assinante(supabase):
-        contexto = _contexto_base(supabase, "assistant")
-        contexto["link_assinatura"] = _link_assinatura_cakto()
-        return render_template("assinatura.html", **contexto)
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return redirect(url_for(
+            "planos", motivo="O Assistente financeiro (texto e voz) é exclusivo do plano Synch IA."
+        ))
 
     todas = _transacoes(supabase)
     do_mes = _do_mes(todas, _mes_selecionado())
@@ -1928,7 +2049,7 @@ def limpar_conversa():
 
 
 # ------------------------------------------------------------------
-# Cakto: webhook que libera/cancela a assinatura do Assistente
+# Cakto: webhook que libera/troca/cancela o plano do usuario
 #
 # A Cakto chama essa rota direto do servidor dela (nao do navegador de
 # ninguem), entao nao tem sessao de login aqui -- so da pra confiar no
@@ -1993,6 +2114,17 @@ def webhook_cakto():
     if evento not in (CAKTO_EVENTOS_ATIVA | CAKTO_EVENTOS_INATIVA):
         return "", 200  # evento que nao muda nada aqui (ex.: pix_gerado)
 
+    if evento in CAKTO_EVENTOS_ATIVA:
+        oferta_id = (dados.get("offer") or {}).get("id")
+        plano = CAKTO_OFERTA_PARA_PLANO.get(oferta_id)
+        if not plano:
+            # Oferta que a gente nao reconhece (ex.: produto novo criado
+            # na Cakto sem atualizar CAKTO_PLANOS aqui) -- melhor nao
+            # liberar nada errado do que adivinhar qual plano e.
+            return "", 200
+    else:
+        plano = "gratis"  # cancelamento, reembolso, chargeback etc. sempre derruba pro gratis
+
     email = ((dados.get("customer") or {}).get("email") or "").strip().lower()
     admin = conectar_admin()
     if not email or admin is None:
@@ -2006,7 +2138,7 @@ def webhook_cakto():
 
     admin.table("assinaturas").upsert({
         "user_id": usuario.id,
-        "ativa": evento in CAKTO_EVENTOS_ATIVA,
+        "plano": plano,
         "cakto_evento": evento,
         "cakto_id": dados.get("id"),
         "atualizada_em": datetime.utcnow().isoformat(),
@@ -2072,6 +2204,11 @@ def exportar_csv(supabase):
 @app.route("/importar", methods=["POST"])
 @com_supabase
 def importar_csv(supabase):
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return _bloquear_por_plano(
+            "Importar um arquivo CSV é um recurso do plano Synch IA. Assine para importar suas transações."
+        )
+
     arquivo = request.files.get("arquivo")
     if not arquivo or not arquivo.filename:
         flash("Escolha um arquivo CSV.")

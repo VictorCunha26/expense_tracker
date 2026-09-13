@@ -449,27 +449,43 @@ select.input option { background: #0b0d0f; color: #eceff1; }
 .chart-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 
 /* ---------------------------------------------------------
-   Assinatura (paywall do Assistente)
+   Planos (Gratis / Basico / Synch IA)
    --------------------------------------------------------- */
 
-.paywall-card { max-width: 520px; margin: 30px auto; padding: 38px; display: flex; flex-direction: column; align-items: center; text-align: center; }
-.paywall-icon {
-  width: 56px; height: 56px; display: grid; place-items: center; border: 1px solid #1d4d2b;
-  border-radius: 16px; color: #35d16a; background: radial-gradient(circle at 35% 25%, #1e6836, #0c1d12 65%);
-  box-shadow: 0 0 50px #16a34a24;
+.plans-motivo { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-color: #4a3415; background: linear-gradient(145deg, #1a1408, #0c0e10); }
+.plans-motivo svg { width: 18px; flex: 0 0 18px; color: #f59e0b; }
+.plans-motivo p { margin: 0; color: #e7ddc9; font-size: 12px; line-height: 1.6; }
+
+.plans-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; animation: view-in .28s ease both; }
+.plans-grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); max-width: 780px; margin: 0 auto; }
+.plan-card { position: relative; padding: 26px 24px; display: flex; flex-direction: column; }
+.plan-card.plan-atual { border-color: #23b754; box-shadow: inset 0 1px 0 #ffffff08, 0 0 0 1px #23b75433; }
+.plan-card.plan-destaque { border-color: #1e2822; background: linear-gradient(160deg, #0d1712 0%, #090b0d 60%); box-shadow: 0 0 60px #16a34a1c; }
+.plan-badge {
+  position: absolute; right: 24px; top: 26px; padding: 4px 10px; border-radius: 999px;
+  background: linear-gradient(180deg, #19ad4d, #10883b); color: #ecfdf3;
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
 }
-.paywall-icon svg { width: 25px; }
-.paywall-card h2 { max-width: 380px; margin: 14px 0 12px; font-size: 26px; line-height: 1.2; letter-spacing: -.03em; }
-.paywall-card > p { max-width: 420px; margin: 0; color: #9aa0a8; font-size: 13px; line-height: 1.7; }
-.paywall-price { display: flex; align-items: baseline; gap: 5px; margin: 26px 0 20px; }
-.paywall-price strong { color: #f4f5f6; font-size: 40px; letter-spacing: -.04em; }
-.paywall-price span { color: #7b828b; font-size: 13px; }
-.paywall-features { width: 100%; max-width: 360px; margin: 0 0 28px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 13px; text-align: left; }
-.paywall-features li { display: flex; align-items: center; gap: 10px; color: #cdd2d7; font-size: 12px; }
-.paywall-features svg { width: 16px; height: 16px; flex: 0 0 16px; color: #22c55e; }
-.paywall-button { width: 100%; max-width: 320px; height: 48px; font-size: 13px; }
-.paywall-button:disabled { opacity: .55; cursor: not-allowed; }
-.paywall-card .assistant-disclaimer { margin-top: 12px; }
+.plan-icon {
+  width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid #1d4d2b;
+  border-radius: 12px; color: #35d16a; background: radial-gradient(circle at 35% 25%, #1e6836, #0c1d12 65%);
+}
+.plan-icon svg { width: 19px; }
+.plan-eyebrow { display: block; margin-top: 18px; color: #7b828b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; }
+.plan-card h2 { margin: 8px 0 6px; font-size: 22px; letter-spacing: -.03em; }
+.plan-card > p { margin: 0; color: #9aa0a8; font-size: 12px; line-height: 1.6; }
+.plan-note { margin-top: 18px; padding: 10px 12px; border: 1px solid #20252a; border-radius: 9px; background: #07090a; color: #6f7780; font-size: 10px; }
+.plan-price { display: flex; align-items: baseline; gap: 4px; margin-top: 22px; }
+.plan-price strong { color: #f4f5f6; font-size: 32px; letter-spacing: -.03em; }
+.plan-period { display: block; margin-top: 3px; color: #7b828b; font-size: 11px; }
+.plan-period small { display: block; margin-top: 2px; color: #35cf68; font-size: 10px; }
+.plan-button { width: 100%; height: 44px; margin-top: 16px; font-size: 12px; box-sizing: border-box; }
+.plan-button-atual { border-color: #23b754 !important; background: transparent !important; color: #35d16a !important; cursor: default; }
+.plan-cobranca { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 9px; color: #6f7780; font-size: 9px; }
+.plan-cobranca svg { width: 12px; height: 12px; flex: 0 0 12px; }
+.plan-features { margin: 22px 0 0; padding-top: 20px; border-top: 1px solid #1c2024; list-style: none; display: flex; flex-direction: column; gap: 12px; }
+.plan-features li { display: flex; align-items: center; gap: 9px; color: #cdd2d7; font-size: 11px; }
+.plan-features svg { width: 14px; height: 14px; flex: 0 0 14px; color: #22c55e; }
 
 /* ---------------------------------------------------------
    Assistente
@@ -788,6 +804,7 @@ dialog.modal.narrow { width: min(440px, calc(100% - 32px)); }
   .insights-panel, .chat-panel { min-height: auto; }
   .chat-messages { min-height: 260px; }
   .budget-list { grid-template-columns: 1fr; }
+  .plans-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 767px) {
