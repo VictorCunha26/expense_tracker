@@ -2,8 +2,8 @@ import csv
 import hashlib
 import hmac
 import io
-import math
 import os
+import re
 import unicodedata
 import urllib.parse
 import uuid
@@ -11,9 +11,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import (
-    Flask, Response, flash, redirect, render_template, request, session, url_for
-)
+from flask import Flask, Response, jsonify, request, session
 from supabase import AuthApiError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -31,24 +29,14 @@ CAKTO_PLANOS = {
         "checkout_url": "https://pay.cakto.com.br/syw8q2x",
         "nome": "Synch IA",
         "preco": "R$ 149,90/ano",
-        "preco_mes": "R$ 12,49/mês",
+        "parcelado": "12x de R$ 15,57",
     },
 }
-# As duas ofertas que ja foram criadas na Cakto (a antiga "Synch IA" a
-# R$349,90 inclusa) apontam pro mesmo plano unico -- assim quem ja
-# comprou por qualquer uma delas continua com acesso completo.
 CAKTO_OFERTA_PARA_PLANO = {
     "syw8q2x": "synch_ia",
     "psh8aeu_1097259": "synch_ia",
 }
-
-# Ordem dos planos, pra comparar "esse usuario tem plano suficiente pra
-# isso" com um simples >=.
 PLANOS_ORDEM = {"gratis": 0, "synch_ia": 1}
-
-# Quais eventos da Cakto ligam ou desligam a assinatura. Um evento fora
-# dessas duas listas (ex.: pix_gerado, checkout_abandonment) e ignorado --
-# ainda nao virou pagamento nem cancelamento de nada.
 CAKTO_EVENTOS_ATIVA = {
     "purchase_approved", "subscription_created",
     "subscription_renewed", "subscription_resumed",
@@ -58,7 +46,6 @@ CAKTO_EVENTOS_INATIVA = {
     "subscription_paused", "refund", "chargeback", "purchase_refused",
 }
 
-# Limites do plano Gratis. Synch IA nao tem limite em nenhum desses.
 LIMITE_GRATIS_CONTAS = 1
 LIMITE_GRATIS_CARTOES = 1
 LIMITE_GRATIS_TRANSACOES_MES = 100
@@ -68,279 +55,87 @@ app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
 
 # Atras do proxy da Vercel a requisicao chega em HTTP por dentro; sem isso
-# url_for(..., _external=True) gera link com "http://" mesmo em producao --
-# e ai o link de redefinir senha nem bate com o cadastrado no Supabase.
+# o cookie de sessao marcado "Secure" nunca seria enviado de volta em producao.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-MESES_PT = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
-}
-MESES_CURTO = {
-    1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun",
-    7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez",
-}
+EM_PRODUCAO = os.getenv("VERCEL") == "1" or os.getenv("FLASK_ENV") == "production"
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=EM_PRODUCAO,
+    SESSION_COOKIE_HTTPONLY=True,
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
+
+# So em desenvolvimento: em producao o front (Next.js) e o back (Flask)
+# vivem na mesma origem -- a Vercel roteia /api/* pra ca -- entao o
+# navegador nunca faz um pedido cross-origin e nao precisa de CORS nenhum.
+# Em dev sao dois servidores (:3000 e :5000), entao libera so o :3000.
+if not EM_PRODUCAO:
+    try:
+        from flask_cors import CORS
+        CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}}, supports_credentials=True)
+    except ImportError:
+        pass
+
+RECEIPTS_BUCKET = "comprovantes"
 
 CATEGORIAS = ["Moradia", "Alimentação", "Transporte", "Lazer", "Assinaturas", "Receita", "Outros"]
-CATEGORIAS_DESPESA = [c for c in CATEGORIAS if c != "Receita"]
-
-# Cores fixas por categoria: o donut, os badges e a lista de orcamentos
-# precisam usar exatamente o mesmo tom pro usuario ligar uma coisa na outra.
-CORES = {
-    "Moradia": "#16a34a", "Alimentação": "#f59e0b", "Transporte": "#3b82f6",
-    "Lazer": "#8b5cf6", "Assinaturas": "#06b6d4", "Outros": "#64748b",
-    "Receita": "#22c55e",
-}
-COR_PADRAO = "#64748b"
-
-# Categorias que o usuario cria na tela de orcamentos nao tem cor fixa --
-# essa paleta e sorteada (por hash do nome, entao sempre a mesma cor pra
-# mesma categoria) pra nao ficar tudo cinza no grafico.
-PALETA_CATEGORIA_CUSTOM = [
-    "#ec4899", "#0ea5e9", "#a855f7", "#eab308",
-    "#14b8a6", "#f97316", "#6366f1", "#84cc16",
-]
-
+# "Outros" recebe o que perde a categoria e "Receita" e a de toda entrada:
+# o app depende das duas, entao nao podem ser excluidas.
+CATEGORIAS_SISTEMA = ("Outros", "Receita")
 TIPOS_CONTA = ["Conta corrente", "Cartão de crédito", "Dinheiro"]
-
 ORCAMENTOS_PADRAO = {
     "Moradia": 1600, "Alimentação": 1100, "Transporte": 650,
     "Lazer": 450, "Assinaturas": 300, "Outros": 900,
 }
 
-# Titulo e subtitulo da topbar por tela -- fica aqui pra nao repetir
-# o texto em cada template.
-TITULOS = {
-    "overview": ("Visão geral", "Aqui está seu resumo financeiro"),
-    "transactions": ("Transações", "Acompanhe todas as entradas e saídas"),
-    "accounts": ("Contas e cartões", "Seus saldos em um só lugar"),
-    "budgets": ("Orçamentos", "Planeje seus limites mensais"),
-    "recurring": ("Recorrentes", "Controle o que se repete todo mês"),
-    "goals": ("Metas", "Acompanhe seus objetivos financeiros"),
-    "reports": ("Relatórios", "Entenda a evolução do seu dinheiro"),
-    "assistant": ("Assistente financeiro", "Insights calculados pelos seus dados"),
-    "settings": ("Configurações", "Gerencie seu perfil e preferências"),
-    "plans": ("Planos", "Escolha o plano que combina com você"),
-}
-
 
 # ------------------------------------------------------------------
-# Formatacao
+# Resposta JSON padrao
 # ------------------------------------------------------------------
 
-@app.template_filter("brl")
-def brl(valor):
-    """Formata em real brasileiro: 1234.5 -> R$ 1.234,50."""
-    try:
-        valor = float(valor or 0)
-    except (TypeError, ValueError):
-        valor = 0.0
-    inteiro, centavos = f"{abs(valor):.2f}".split(".")
-    # Agrupa o milhar de tras pra frente e devolve com ponto.
-    grupos = []
-    while len(inteiro) > 3:
-        grupos.insert(0, inteiro[-3:])
-        inteiro = inteiro[:-3]
-    grupos.insert(0, inteiro)
-    sinal = "-" if valor < 0 else ""
-    return f"{sinal}R$ {'.'.join(grupos)},{centavos}"
+def json_ok(payload, status=200):
+    return jsonify(payload), status
 
 
-@app.template_filter("data_br")
-def data_br(valor):
-    """Mostra so dia/mes/ano, sem hora."""
-    if not valor:
-        return ""
-    try:
-        ano, mes, dia = str(valor)[:10].split("-")
-        return f"{dia}/{mes}/{ano}"
-    except Exception:
-        return valor
+def json_error(code, message, status=400, **extra):
+    corpo = {"code": code, "message": message}
+    corpo.update(extra)
+    return jsonify(corpo), status
 
 
-@app.template_filter("data_curta")
-def data_curta(valor):
-    """'26 ago', ou 'Hoje' quando for o dia corrente -- igual ao painel do zip."""
-    if not valor:
-        return ""
-    texto = str(valor)[:10]
-    if texto == date.today().isoformat():
-        return "Hoje"
-    try:
-        _, mes, dia = texto.split("-")
-        return f"{int(dia)} {MESES_CURTO[int(mes)]}"
-    except Exception:
-        return texto
-
-
-def _numero(texto, padrao=0.0):
-    """Le valor digitado em pt-BR ('1.234,56') ou em formato cru ('1234.56')."""
-    if texto is None:
-        return padrao
-    texto = str(texto).strip().replace("R$", "").replace(" ", "")
-    if not texto:
-        return padrao
-    if "," in texto:
-        texto = texto.replace(".", "").replace(",", ".")
-    try:
-        return float(texto)
-    except ValueError:
-        return padrao
-
-
-def _cor(categoria):
-    if categoria in CORES:
-        return CORES[categoria]
-    if not categoria:
-        return COR_PADRAO
-    indice = sum(ord(c) for c in categoria) % len(PALETA_CATEGORIA_CUSTOM)
-    return PALETA_CATEGORIA_CUSTOM[indice]
+def _corpo():
+    return request.get_json(silent=True) or {}
 
 
 def _chave_conta(nome):
-    """Nome de conta normalizado para comparacao.
-
-    Transacao guarda o nome da conta como texto. Se a comparacao for exata,
-    qualquer diferenca invisivel quebra o vinculo e a compra deixa de ser
-    reconhecida como do cartao -- passando a contar em 'Gastos no mes' na
-    hora, em vez de esperar a fatura.
-
-    NFC importa: "Itau" com acento pode vir precomposto (u+0301 -> \u00fa) ou
-    decomposto (u + acento combinante). Os dois parecem iguais na tela e sao
-    strings diferentes pro Python.
-    """
+    """Nome de conta normalizado para comparacao (ver nota historica: a
+    transacao guarda o NOME da conta como texto, nao um id -- comparar
+    exato quebra o vinculo por qualquer diferenca de acentuacao/maiuscula)."""
     return unicodedata.normalize("NFC", (nome or "").strip()).casefold()
 
 
-# ------------------------------------------------------------------
-# Geometria dos graficos
-#
-# Nao existe biblioteca de grafico aqui: o servidor devolve as
-# coordenadas prontas e o template so desenha o SVG. E o mesmo caminho
-# que o projeto ja usava, so que agora cobre area, donut e barras.
-# ------------------------------------------------------------------
-
-def _grafico_area(rotulos, valores, largura=640, altura=220, pad_x=18, pad_y=20):
-    """Linha + area preenchida. 'rotulos' vira o texto do tooltip de cada ponto."""
-    if not valores:
-        return None
-    if len(valores) == 1:
-        valores = [valores[0], valores[0]]
-        rotulos = [rotulos[0], rotulos[0]]
-
-    minimo, maximo = min(valores), max(valores)
-    faixa = (maximo - minimo) or (maximo or 1)
-    passo = (largura - pad_x * 2) / (len(valores) - 1)
-    base_y = altura - pad_y
-
-    pontos = []
-    for i, v in enumerate(valores):
-        x = pad_x + i * passo
-        y = pad_y + (altura - pad_y * 2) * (1 - (v - minimo) / faixa)
-        pontos.append({"x": round(x, 1), "y": round(y, 1), "valor": v, "rotulo": rotulos[i]})
-
-    linha = " ".join(f"{p['x']},{p['y']}" for p in pontos)
-    area = (
-        f"M{pontos[0]['x']},{base_y} "
-        + " ".join(f"L{p['x']},{p['y']}" for p in pontos)
-        + f" L{pontos[-1]['x']},{base_y} Z"
-    )
-    return {
-        "pontos": pontos, "linha": linha, "area": area,
-        "largura": largura, "altura": altura, "base_y": base_y,
-        "maximo": maximo, "total": sum(valores),
-    }
+def _chave_email(email):
+    """E-mail normalizado pra comparar e usar como chave em cakto_pendencias
+    (mesma normalizacao que o webhook da Cakto ja aplicava)."""
+    return (email or "").strip().lower()
 
 
-def _donut(itens, raio=74):
-    """Arcos do donut por categoria, em stroke-dasharray/dashoffset.
-    'itens' e uma lista de (nome, total) ja ordenada."""
-    if not itens:
-        return None
-    circunferencia = 2 * math.pi * raio
-    total_geral = sum(total for _, total in itens) or 1
-    segmentos = []
-    acumulado = 0.0
-    for nome, total in itens:
-        pct = total / total_geral * 100
-        comprimento = (pct / 100) * circunferencia
-        segmentos.append({
-            "nome": nome, "valor": total, "pct": pct, "cor": _cor(nome),
-            "dasharray": f"{comprimento:.2f} {(circunferencia - comprimento):.2f}",
-            "dashoffset": round(-acumulado, 2),
-        })
-        acumulado += comprimento
-    return {"segmentos": segmentos, "raio": raio, "circunferencia": round(circunferencia, 2)}
+def _cor_valida(cor, padrao):
+    """Cor de conta/cartao no formato #rrggbb; qualquer outra coisa cai no padrao."""
+    cor = (cor or "").strip()
+    return cor if re.fullmatch(r"#[0-9a-fA-F]{6}", cor) else padrao
 
 
-def _grafico_barras(dados, largura=680, altura=300, pad_x=26, pad_y=22):
-    """Barras pareadas (receita x despesa) por mes, pro relatorio."""
-    if not dados:
-        return None
-    maximo = max(max(d["receitas"], d["despesas"]) for d in dados) or 1
-    area_util = altura - pad_y * 2
-    base_y = altura - pad_y
-    largura_grupo = (largura - pad_x * 2) / len(dados)
-    largura_barra = min(22, largura_grupo / 3)
-
-    grupos = []
-    for i, d in enumerate(dados):
-        centro = pad_x + largura_grupo * (i + 0.5)
-        barras = []
-        for chave, cor in (("receitas", "#22c55e"), ("despesas", "#374151")):
-            valor = d[chave]
-            alt = (valor / maximo) * area_util
-            deslocamento = -largura_barra - 2 if chave == "receitas" else 2
-            barras.append({
-                "x": round(centro + deslocamento, 1),
-                "y": round(base_y - alt, 1),
-                "altura": round(max(alt, 1), 1),
-                "largura": round(largura_barra, 1),
-                "cor": cor,
-                "valor": valor,
-                "rotulo": "Receitas" if chave == "receitas" else "Despesas",
-            })
-        grupos.append({"mes": d["mes"], "x": round(centro, 1), "barras": barras})
-
-    # Quatro linhas-guia horizontais, com o valor em 'k' na lateral.
-    grade = []
-    for i in range(5):
-        valor = maximo * i / 4
-        grade.append({
-            "y": round(base_y - area_util * i / 4, 1),
-            "rotulo": f"{round(valor / 1000, 1):g}k" if maximo >= 1000 else f"{valor:.0f}",
-        })
-
-    return {
-        "grupos": grupos, "grade": grade, "largura": largura,
-        "altura": altura, "base_y": base_y, "pad_x": pad_x,
-    }
-
-
-def _minigrafico(valores, largura=132, altura=52, pad=5):
-    """Sparkline dos cards de KPI."""
-    if not valores:
-        return ""
-    if len(valores) == 1:
-        y = altura / 2
-        return f"{pad},{y} {largura - pad},{y}"
-    minimo, maximo = min(valores), max(valores)
-    faixa = (maximo - minimo) or 1
-    passo = (largura - pad * 2) / (len(valores) - 1)
-    return " ".join(
-        f"{pad + i * passo:.1f},{altura - pad - ((v - minimo) / faixa) * (altura - pad * 2):.1f}"
-        for i, v in enumerate(valores)
-    )
+def _frontend_url(caminho):
+    base = request.host_url.rstrip("/")
+    return f"{base}{caminho}"
 
 
 # ------------------------------------------------------------------
 # Sessao / Supabase
 # ------------------------------------------------------------------
 
-# Traduz os codigos de erro mais comuns do Supabase Auth pra uma frase que
-# a pessoa entende e sabe o que fazer, em vez do texto cru da API (tipo
-# "email rate limit exceeded").
 _MENSAGENS_AUTH = {
     "over_email_send_rate_limit": "Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.",
     "email_exists": "Já existe uma conta com esse e-mail.",
@@ -354,14 +149,56 @@ def _mensagem_erro_auth(erro):
     return _MENSAGENS_AUTH.get(codigo, f"Não foi possível concluir: {erro}")
 
 
+def obter_supabase():
+    """Retorna um cliente autenticado, renovando o token se estiver expirado."""
+    supabase = conectar_como_usuario(session["access_token"])
+    try:
+        supabase.auth.get_user(session["access_token"])
+    except Exception:
+        try:
+            nova_sessao = renovar_sessao(session["refresh_token"])
+            session["access_token"] = nova_sessao.access_token
+            session["refresh_token"] = nova_sessao.refresh_token
+            supabase = conectar_como_usuario(session["access_token"])
+        except Exception:
+            session.clear()
+            return None
+    return supabase
+
+
+def login_necessario(f):
+    @wraps(f)
+    def decorada(*args, **kwargs):
+        if "access_token" not in session:
+            return json_error("UNAUTHENTICATED", "Sessão expirada. Faça login novamente.", 401)
+        return f(*args, **kwargs)
+    return decorada
+
+
+def com_supabase(f):
+    """Injeta o cliente autenticado como 1o argumento e trata sessao
+    expirada num lugar so, em vez de repetir o mesmo if em cada rota."""
+    @wraps(f)
+    @login_necessario
+    def decorada(*args, **kwargs):
+        supabase = obter_supabase()
+        if supabase is None:
+            return json_error("UNAUTHENTICATED", "Sessão expirada. Faça login novamente.", 401)
+        return f(supabase, *args, **kwargs)
+    return decorada
+
+
+def _uid():
+    return session["user_id"]
+
+
 # ------------------------------------------------------------------
 # Planos (Gratis / Synch IA)
 # ------------------------------------------------------------------
 
 def _plano_usuario(supabase):
-    """'gratis' ou 'synch_ia'. So o webhook da Cakto grava essa
-    linha (ver secao 'Cakto' mais abaixo) -- 'gratis' e o padrao pra
-    quem nunca assinou nada."""
+    """'gratis' ou 'synch_ia'. So o webhook da Cakto grava essa linha --
+    'gratis' e o padrao pra quem nunca assinou nada."""
     try:
         linha = (
             supabase.table("assinaturas").select("plano")
@@ -390,144 +227,8 @@ def _link_assinatura(plano):
     return f"{info['checkout_url']}?{query}"
 
 
-def _bloquear_por_plano(motivo):
-    """Usa isso quando uma acao (salvar conta, meta, importar...) esbarra
-    no limite do plano atual -- manda pra tela de planos com o motivo,
-    em vez de so recusar sem explicar."""
-    flash(motivo)
-    return redirect(url_for("planos", motivo=motivo))
-
-
-def obter_supabase():
-    """Retorna um cliente autenticado, renovando o token se estiver expirado."""
-    supabase = conectar_como_usuario(session["access_token"])
-    try:
-        # Testa se o token ainda e valido com uma chamada leve.
-        supabase.auth.get_user(session["access_token"])
-    except Exception:
-        try:
-            nova_sessao = renovar_sessao(session["refresh_token"])
-            session["access_token"] = nova_sessao.access_token
-            session["refresh_token"] = nova_sessao.refresh_token
-            supabase = conectar_como_usuario(session["access_token"])
-        except Exception:
-            session.clear()
-            return None
-    return supabase
-
-
-def login_necessario(f):
-    @wraps(f)
-    def decorada(*args, **kwargs):
-        if "access_token" not in session:
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return decorada
-
-
-def _lancar_recorrentes(supabase):
-    """Cria em Transações as recorrências cujo dia do mês já chegou.
-
-    Não existe cron aqui (o deploy é serverless), então a geração acontece
-    quando a pessoa abre o app -- uma vez por dia, marcada na sessão.
-
-    Idempotência vem de recorrente_id: se já existe lançamento daquela regra
-    no mês, não cria outro. Sem isso cada visita duplicaria a conta.
-
-    O status depende de onde a cobrança cai:
-      - cartão  -> 'pago', porque a compra já entrou na fatura; quem se paga
-                   depois é a fatura, não o lançamento;
-      - conta ou dinheiro -> 'pendente', porque sai do saldo e o app não tem
-                   como saber se o débito realmente aconteceu.
-    """
-    hoje = date.today()
-    mes = hoje.strftime("%Y-%m")
-
-    regras = [r for r in _recorrentes(supabase) if r.get("ativo")]
-    if not regras:
-        return 0
-
-    ja_lancadas = {
-        d.get("recorrente_id") for d in (
-            supabase.table("despesas").select("recorrente_id, data")
-            .eq("user_id", _uid()).gte("data", f"{mes}-01").execute().data or []
-        ) if d.get("recorrente_id")
-    }
-    cartoes = {
-        _chave_conta(c["nome"]) for c in _contas(supabase)
-        if c.get("tipo") == "Cartão de crédito"
-    }
-
-    novas = []
-    for r in regras:
-        if r["id"] in ja_lancadas:
-            continue
-        dia = max(1, min(int(r.get("dia") or 1), _ultimo_dia_do_mes(mes)))
-        if hoje.day < dia:
-            continue
-
-        no_cartao = _chave_conta(r.get("conta")) in cartoes
-        novas.append({
-            "user_id": _uid(),
-            "nome_despesa": r["nome"],
-            "descricao": "Lançamento automático",
-            "categoria": r.get("categoria") or "Outros",
-            "tipo": r.get("tipo") or "despesa",
-            "conta": r.get("conta"),
-            "status": "pago" if no_cartao else "pendente",
-            "valor": float(r.get("valor") or 0),
-            "data": f"{mes}-{dia:02d}",
-            "recorrente": True,
-            "recorrente_id": r["id"],
-        })
-
-    if novas:
-        supabase.table("despesas").insert(novas).execute()
-    return len(novas)
-
-
-def com_supabase(f):
-    """Injeta o cliente autenticado como 1o argumento e trata sessao expirada
-    num lugar so, em vez de repetir o mesmo if em cada rota."""
-    @wraps(f)
-    @login_necessario
-    def decorada(*args, **kwargs):
-        supabase = obter_supabase()
-        if supabase is None:
-            flash("Sua sessão expirou. Faça login novamente.")
-            return redirect(url_for("login"))
-
-        # Uma vez por dia por sessao: sem cron, e aqui que as recorrencias
-        # viram lancamento. Falhar nisso nao pode impedir a tela de abrir.
-        hoje = date.today().isoformat()
-        if request.method == "GET" and session.get("recorrentes_em") != hoje:
-            session["recorrentes_em"] = hoje
-            try:
-                criadas = _lancar_recorrentes(supabase)
-                if criadas:
-                    flash(f"{criadas} recorrência{'s' if criadas > 1 else ''} "
-                          f"lançada{'s' if criadas > 1 else ''} automaticamente.")
-            except Exception:
-                session.pop("recorrentes_em", None)
-
-        return f(supabase, *args, **kwargs)
-    return decorada
-
-
-def _uid():
-    return session["user_id"]
-
-
-@app.route("/planos")
-@com_supabase
-def planos(supabase):
-    contexto = _contexto_base(supabase, "plans")
-    contexto.update({
-        "plano_atual": _plano_usuario(supabase),
-        "link_synch_ia": _link_assinatura("synch_ia"),
-        "motivo": request.args.get("motivo"),
-    })
-    return render_template("planos.html", **contexto)
+def _erro_plano(motivo):
+    return json_error("PLAN_LIMIT", motivo, 403, upgradeUrl=_link_assinatura("synch_ia"))
 
 
 # ------------------------------------------------------------------
@@ -548,208 +249,16 @@ def _contas(supabase):
 
 
 def _faturas(supabase):
+    """Registros do mecanismo ANTIGO de pagamento (antes desta migracao).
+    Mantido so pra nao perder o historico de quem ja pagou fatura pelo
+    fluxo antigo -- o novo motor usa fatura_pagamentos/fatura_ajustes."""
     resposta = supabase.table("faturas").select("*").eq("user_id", _uid()).execute()
     return resposta.data or []
 
 
-# ------------------------------------------------------------------
-# Ciclo do cartao
-#
-# A fatura nao e um valor digitado: ela e a soma do que foi lancado no
-# cartao dentro do ciclo. O ciclo vai do dia seguinte ao fechamento ate
-# o fechamento do mes -- compra feita depois do fechamento ja cai na
-# fatura do mes que vem, que e como cartao funciona de verdade.
-# ------------------------------------------------------------------
-
-def _mes_da_fatura(data_iso, fechamento):
-    """Em qual fatura (YYYY-MM) a compra cai."""
-    ano, mes, dia = int(data_iso[:4]), int(data_iso[5:7]), int(data_iso[8:10])
-    if dia > fechamento:
-        return _somar_meses(date(ano, mes, 1), 1).strftime("%Y-%m")
-    return f"{ano:04d}-{mes:02d}"
-
-
-def _vencimento_da_fatura(mes, fechamento, vencimento):
-    """Data em que a fatura daquele mes vence. Quando o dia do vencimento
-    e menor ou igual ao do fechamento, ele cai no mes seguinte
-    (fecha 28/08, vence 10/09)."""
-    base = date(int(mes[:4]), int(mes[5:7]), 1)
-    if vencimento <= fechamento:
-        base = _somar_meses(base, 1)
-    dia = min(vencimento, _ultimo_dia_do_mes(base.strftime("%Y-%m")))
-    return date(base.year, base.month, dia)
-
-
-def _saldos(lista_contas, transacoes, registros, mes):
-    """Saldo de cada conta ate o fim do mes exibido.
-
-    O campo 'saldo' do cadastro e o saldo INICIAL; em cima dele entra tudo
-    que ja aconteceu ate o mes exibido -- acumulado, nunca so o mes. Se
-    contasse apenas o mes corrente, o saldo voltaria ao valor cadastrado a
-    cada virada e as saidas anteriores sumiriam.
-
-    Tudo e calculado na hora: nada e gravado em contas.saldo. Isso mantem o
-    pagamento da fatura e a despesa comum sob a mesma regra, e faz reabrir
-    uma fatura devolver o valor sem precisar de compensacao.
-    """
-    saldos = {}
-    for c in lista_contas:
-        if c.get("tipo") == "Cartão de crédito":
-            continue
-
-        total = float(c.get("saldo") or 0)
-        chave = _chave_conta(c["nome"])
-        for t in transacoes:
-            if _chave_conta(t.get("conta")) != chave or t.get("status") != "pago":
-                continue
-            if not t.get("data") or t["data"][:7] > mes:
-                continue
-            total += -_valor(t) if _e_despesa(t) else _valor(t)
-
-        # O pagamento da fatura ja e uma transacao nesta conta, somada no
-        # laco acima -- descontar tambem pelo registro tiraria em dobro.
-        saldos[c["id"]] = total
-    return saldos
-
-
-def _pago_por_fatura(transacoes):
-    """Quanto ja foi pago em cada fatura, somando as transacoes de quitacao.
-
-    Fonte unica: quem manda e o lancamento em Transacoes, nao um campo
-    separado. O campo 'valor_pago' da tabela existia em paralelo e podia
-    divergir -- uma fatura marcada com valor pago sem nenhuma transacao
-    correspondente fazia compras contarem como gasto sem ninguem ter pago.
-    """
-    total = defaultdict(float)
-    for t in transacoes:
-        if t.get("fatura_id"):
-            total[t["fatura_id"]] += _valor(t)
-    return total
-
-
-def _efetivados(lista_contas, registros, transacoes):
-    """Mapa id_transacao -> quanto dela ja saiu do bolso.
-
-    Fora do cartao: o valor inteiro, se estiver paga.
-
-    No cartao, quem libera e a fatura -- e ela pode estar paga so em parte.
-    Antes bastava a fatura estar marcada como paga pra TODAS as compras do
-    ciclo contarem, inclusive as lancadas depois do pagamento. Agora o valor
-    pago e distribuido pelas compras em ordem de data: o que passa do que foi
-    quitado nao conta, porque esse dinheiro ainda nao saiu da conta.
-    """
-    cartoes = {
-        _chave_conta(c["nome"]): (c["id"], int(c.get("fechamento") or 28))
-        for c in lista_contas if c.get("tipo") == "Cartão de crédito"
-    }
-    pago_por_fatura = _pago_por_fatura(transacoes)
-    pago_do_ciclo = {
-        (r.get("conta_id"), r.get("mes")): pago_por_fatura.get(r.get("id"), 0.0)
-        for r in registros
-    }
-
-    resultado, por_ciclo = {}, defaultdict(list)
-    for t in transacoes:
-        # Quitacao de fatura nao e gasto novo: as compras e que contam.
-        if not _e_despesa(t) or t.get("fatura_id"):
-            resultado[t["id"]] = 0.0
-            continue
-        cartao = cartoes.get(_chave_conta(t.get("conta")))
-        if not cartao:
-            resultado[t["id"]] = _valor(t) if t.get("status") == "pago" else 0.0
-            continue
-        if not t.get("data"):
-            resultado[t["id"]] = 0.0
-            continue
-        id_cartao, fechamento = cartao
-        por_ciclo[(id_cartao, _mes_da_fatura(t["data"], fechamento))].append(t)
-
-    for chave, itens in por_ciclo.items():
-        restante = pago_do_ciclo.get(chave, 0.0)
-        for t in sorted(itens, key=lambda x: ((x.get("data") or ""), x["id"])):
-            usado = min(_valor(t), max(0.0, restante))
-            resultado[t["id"]] = usado
-            restante -= usado
-
-    return resultado
-
-
-def _montar_faturas(transacoes, lista_contas, registros, mes):
-    """Uma fatura por cartao no mes selecionado, com valor calculado,
-    data de vencimento e situacao de pagamento."""
-    por_conta = {r["conta_id"]: r for r in registros if r.get("mes") == mes}
-    nomes = {c["id"]: c["nome"] for c in lista_contas}
-    pago_por_fatura = _pago_por_fatura(transacoes)
-    hoje = date.today()
-
-    faturas = []
-    for c in lista_contas:
-        if c.get("tipo") != "Cartão de crédito":
-            continue
-
-        fechamento = int(c.get("fechamento") or 28)
-        vencimento = int(c.get("vencimento") or 10)
-
-        chave = _chave_conta(c["nome"])
-        do_cartao = [
-            t for t in transacoes
-            if _chave_conta(t.get("conta")) == chave and t.get("data")
-        ]
-        # Receita lancada no cartao e estorno: abate da fatura em vez de somar.
-        def total(lista):
-            return sum(_valor(t) if _e_despesa(t) else -_valor(t) for t in lista)
-
-        itens = [t for t in do_cartao if _mes_da_fatura(t["data"], fechamento) == mes]
-        seguinte = _somar_meses(date(int(mes[:4]), int(mes[5:7]), 1), 1).strftime("%Y-%m")
-        itens_seguinte = [t for t in do_cartao if _mes_da_fatura(t["data"], fechamento) == seguinte]
-
-        registro = por_conta.get(c["id"]) or {}
-        valor = total(itens)
-        # Quanto ja foi quitado desta fatura. Compra nova no mesmo ciclo
-        # depois de pagar deixa uma diferenca -- e so ela que falta pagar.
-        pago_valor = pago_por_fatura.get(registro.get("id"), 0.0)
-        restante = round(valor - pago_valor, 2)
-        pago = registro.get("status") == "pago" and restante <= 0
-        vence = _vencimento_da_fatura(mes, fechamento, vencimento)
-
-        # A fatura do mes M fecha no dia 'fechamento' do proprio M. Enquanto
-        # nao fecha ela ainda esta recebendo compras -- pagar nao faz sentido,
-        # o valor ainda vai mudar.
-        dia_fecha = min(fechamento, _ultimo_dia_do_mes(mes))
-        data_fechamento = date(int(mes[:4]), int(mes[5:7]), dia_fecha)
-        fechada = hoje > data_fechamento
-
-        faturas.append({
-            "conta": c,
-            "valor": valor,
-            "itens": len(itens),
-            # O que ja passou do fechamento e caiu na proxima fatura. Sem
-            # mostrar isso, a compra "some" e parece que nao foi lancada.
-            "proximo_valor": total(itens_seguinte),
-            "proximo_itens": len(itens_seguinte),
-            "proximo_mes": seguinte,
-            "status": "pago" if pago else "pendente",
-            "pago_valor": pago_valor,
-            "restante": max(0.0, restante),
-            "parcial": pago_valor > 0 and restante > 0,
-            "pago_com": registro.get("pago_com"),
-            "pago_com_nome": nomes.get(registro.get("pago_com"), "conta removida"),
-            "valor_pago": pago_valor,
-            "vence": vence,
-            "vence_texto": f"{vence.day:02d}/{vence.month:02d}",
-            "fechada": fechada,
-            "fecha_texto": f"{dia_fecha:02d}/{int(mes[5:7]):02d}",
-            # Fatura sem gasto nao vence nem atrasa: nao ha o que pagar.
-            "atrasada": (not pago) and restante > 0 and vence < hoje,
-            "fechamento": fechamento,
-            "vencimento": vencimento,
-        })
-    return faturas
-
-
 def _orcamentos(supabase):
-    """Devolve {categoria: limite}. Na primeira visita cria os limites padrao,
-    senao a tela de orcamentos abriria vazia e sem nada pra editar."""
+    """Devolve {categoria: limite}. Na primeira visita cria os limites
+    padrao, senao o front abriria sem nada pra editar."""
     resposta = supabase.table("orcamentos").select("*").eq("user_id", _uid()).execute()
     linhas = resposta.data or []
     if not linhas:
@@ -767,6 +276,60 @@ def _recorrentes(supabase):
     return resposta.data or []
 
 
+def _chave_categoria(nome):
+    """Compara categorias sem ligar pra maiuscula, acento ou espaco a mais."""
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFD", nome or "") if unicodedata.category(c) != "Mn"
+    )
+    return " ".join(sem_acento.split()).casefold()
+
+
+def _categorias_derivadas(supabase, transacoes=None):
+    """As categorias padrao mais tudo que ja existe como orcamento, transacao
+    ou recorrencia (ex.: 'Investimentos'), sem repetir. E a lista inicial de
+    quem ainda nao tem categorias gravadas."""
+    if transacoes is None:
+        transacoes = _transacoes(supabase)
+    orcamentos = supabase.table("orcamentos").select("categoria").eq("user_id", _uid()).execute().data or []
+    usadas = [o.get("categoria") for o in orcamentos]
+    usadas += [t.get("categoria") for t in transacoes]
+    usadas += [r.get("categoria") for r in _recorrentes(supabase)]
+
+    extras = sorted({" ".join(n.split()) for n in usadas if n and n.strip()})
+    nomes, vistas = [], set()
+    for nome in list(CATEGORIAS) + extras:
+        chave = _chave_categoria(nome)
+        if chave and chave not in vistas:
+            vistas.add(chave)
+            nomes.append(nome)
+    return nomes
+
+
+def _categorias(supabase, transacoes=None):
+    """Nomes das categorias do usuario, na ordem em que foram criadas. Na
+    primeira leitura grava a lista inicial (ver _categorias_derivadas), do
+    mesmo jeito que _orcamentos faz com os limites padrao. Levanta erro se a
+    tabela 'categorias' ainda nao existe."""
+    linhas = (
+        supabase.table("categorias").select("nome")
+        .eq("user_id", _uid()).order("id").execute().data or []
+    )
+    if linhas:
+        return [l["nome"] for l in linhas]
+    nomes = _categorias_derivadas(supabase, transacoes)
+    supabase.table("categorias").insert([{"user_id": _uid(), "nome": n} for n in nomes]).execute()
+    return nomes
+
+
+def _nomes_categorias(supabase, transacoes=None):
+    """Como _categorias, mas sem derrubar o app se a tabela ainda nao foi
+    criada (migracao nao rodada): nesse caso usa a lista derivada."""
+    try:
+        return _categorias(supabase, transacoes)
+    except Exception:
+        return _categorias_derivadas(supabase, transacoes)
+
+
 def _metas(supabase):
     resposta = supabase.table("metas").select("*").eq("user_id", _uid()).order("id").execute()
     return resposta.data or []
@@ -777,60 +340,16 @@ def _preferencias(supabase):
     linhas = resposta.data or []
     if linhas:
         return linhas[0]
-    # Primeiro acesso: cria a linha com o nome derivado do e-mail.
     padrao = {
         "user_id": _uid(),
         "nome": (session.get("email") or "").split("@")[0].title() or "Usuário",
-        "notificacoes": True,
-        "resumo_semanal": True, "onboarding": False,
+        "notificacoes": True, "resumo_semanal": True, "onboarding": False,
     }
     try:
         supabase.table("preferencias").insert(padrao).execute()
     except Exception:
         pass
     return padrao
-
-
-def _mes_atual():
-    return date.today().strftime("%Y-%m")
-
-
-def _mes_selecionado():
-    """Mes que o painel esta mostrando -- vem SEMPRE da URL.
-
-    Antes ficava guardado na sessao, e isso tornava o mes pegajoso: bastava
-    abrir um link de outro mes (o aviso de proxima fatura, por exemplo) pra
-    o app inteiro travar naquele mes, em todas as telas, sem voltar sozinho.
-    Quem abrisse o painel depois disso veria o mes errado e acharia que os
-    lancamentos novos sumiram. Com o mes na URL, abrir o app sempre cai no
-    mes corrente e o botao voltar funciona.
-    """
-    mes = request.args.get("mes") or ""
-    if len(mes) == 7 and mes[4] == "-":
-        try:
-            ano, numero = int(mes[:4]), int(mes[5:7])
-        except ValueError:
-            return _mes_atual()
-        if 2000 <= ano <= 2100 and 1 <= numero <= 12:
-            return mes
-    return _mes_atual()
-
-
-def _meses_disponiveis(transacoes):
-    """Ultimos 12 meses com movimentacao, mais o mes corrente e o selecionado
-    -- assim o seletor nunca fica sem a opcao que esta ativa."""
-    meses = {t["data"][:7] for t in transacoes if t.get("data")}
-    meses.add(date.today().strftime("%Y-%m"))
-    meses.add(_mes_selecionado())
-    ordenados = sorted(meses, reverse=True)[:12]
-    return [
-        {"valor": m, "rotulo": f"{MESES_PT[int(m[5:7])]} {m[:4]}"}
-        for m in ordenados
-    ]
-
-
-def _do_mes(transacoes, mes):
-    return [t for t in transacoes if (t.get("data") or "")[:7] == mes]
 
 
 def _valor(t):
@@ -841,317 +360,12 @@ def _e_despesa(t):
     return t.get("tipo", "despesa") != "receita"
 
 
-def _contexto_base(supabase, tela, transacoes=None, preferencias=None):
-    """Tudo que o layout (sidebar, topbar, modal de nova transacao) precisa,
-    em qualquer tela."""
-    transacoes = _transacoes(supabase) if transacoes is None else transacoes
-    preferencias = _preferencias(supabase) if preferencias is None else preferencias
-    mes = _mes_selecionado()
-    mes_atual = _mes_atual()
-    do_mes = _do_mes(transacoes, mes)
-    titulo, subtitulo = TITULOS[tela]
-
-    # Data que o formulario de nova transacao ja vem preenchida: hoje quando
-    # o mes exibido e o corrente, senao o dia 1 do mes que esta na tela --
-    # senao o lancamento nasce fora do mes que o usuario esta olhando.
-    hoje = date.today()
-    data_padrao = hoje.isoformat() if mes == mes_atual else f"{mes}-01"
-
-    # Categorias de despesa: as fixas mais as que o usuario criou na tela
-    # de orcamentos -- assim uma categoria nova ja aparece pra escolher
-    # ao lancar uma transacao ou uma recorrencia.
-    extras = sorted(c for c in _orcamentos(supabase) if c not in CATEGORIAS_DESPESA)
-    categorias_despesa = CATEGORIAS_DESPESA + extras
-    categorias = categorias_despesa + ["Receita"]
-
-    return {
-        "tela": tela,
-        "titulo": titulo,
-        "subtitulo": subtitulo,
-        "mes": mes,
-        "mes_atual": mes_atual,
-        # Vai nos links de navegacao pra o mes escolhido acompanhar a troca
-        # de tela. None no mes corrente, pra URL ficar limpa.
-        "mes_url": None if mes == mes_atual else mes,
-        "outros_filtros": {k: v for k, v in request.args.items() if k != "mes"},
-        "mes_rotulo": f"{MESES_PT[int(mes[5:7])]} {mes[:4]}",
-        "meses": _meses_disponiveis(transacoes),
-        "email": session.get("email"),
-        "preferencias": preferencias,
-        "categorias": categorias,
-        "categorias_despesa": categorias_despesa,
-        "tipos_conta": TIPOS_CONTA,
-        "cores": CORES,
-        # Receita nao entra em cartao de credito, entao o modal precisa
-        # saber o tipo de cada conta -- nao so o nome.
-        "contas_modal": [
-            {"nome": c["nome"], "cartao": c.get("tipo") == "Cartão de crédito"}
-            for c in _contas(supabase)
-        ],
-        "hoje": data_padrao,
-        "pendentes": sum(1 for t in do_mes if t.get("status") == "pendente"),
-    }
+def _mes_atual():
+    return date.today().strftime("%Y-%m")
 
 
-# ------------------------------------------------------------------
-# Autenticacao
-# ------------------------------------------------------------------
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        email = request.form["email"]
-        senha = request.form["senha"]
-
-        supabase = conectar()
-        try:
-            resposta = supabase.auth.sign_in_with_password({
-                "email": email,
-                "password": senha,
-            })
-        except Exception:
-            flash("E-mail ou senha inválidos.")
-            return redirect(url_for("login"))
-
-        session["access_token"] = resposta.session.access_token
-        session["refresh_token"] = resposta.session.refresh_token
-        session["user_id"] = resposta.user.id
-        session["email"] = resposta.user.email
-
-        return redirect(url_for("index"))
-
-    return render_template("login.html")
-
-
-@app.route("/cadastro", methods=["GET", "POST"])
-def cadastro():
-    if request.method == "POST":
-        email = request.form["email"]
-        senha = request.form["senha"]
-
-        supabase = conectar()
-        try:
-            supabase.auth.sign_up({"email": email, "password": senha})
-        except Exception as erro:
-            flash(_mensagem_erro_auth(erro))
-            return redirect(url_for("cadastro"))
-
-        flash("Conta criada! Verifique seu e-mail para confirmar antes de entrar.")
-        return redirect(url_for("login"))
-
-    return render_template("cadastro.html")
-
-
-@app.route("/esqueci-senha", methods=["GET", "POST"])
-def esqueci_senha():
-    if request.method == "POST":
-        email = (request.form.get("email") or "").strip()
-        if email:
-            supabase = conectar()
-            try:
-                supabase.auth.reset_password_for_email(
-                    email, {"redirect_to": url_for("redefinir_senha", _external=True)}
-                )
-            except AuthApiError as erro:
-                # O limite de envio e por projeto, nao por conta -- avisar
-                # disso nao revela se o e-mail digitado existe ou nao.
-                if erro.code == "over_email_send_rate_limit":
-                    flash(_mensagem_erro_auth(erro))
-                    return redirect(url_for("esqueci_senha"))
-            except Exception:
-                pass  # nao revela se o e-mail existe ou nao
-
-        # Mensagem igual sempre que o e-mail exista ou nao -- evita que
-        # alguem descubra quais e-mails estao cadastrados por tentativa.
-        flash("Se o e-mail estiver cadastrado, enviamos um link para redefinir a senha.")
-        return redirect(url_for("login"))
-
-    return render_template("esqueci_senha.html")
-
-
-@app.route("/redefinir-senha", methods=["GET", "POST"])
-def redefinir_senha():
-    """Segunda metade do 'esqueci minha senha': o link do e-mail cai aqui
-    com o token de recuperacao no fragmento da URL (#access_token=...),
-    que o navegador nunca manda pro servidor -- por isso o template le
-    esse fragmento com JS e joga num campo oculto do formulario antes
-    de enviar. Com o token em maos, a senha e trocada de verdade no
-    Supabase Auth (nao e so uma tela bonita)."""
-    if request.method == "POST":
-        access_token = request.form.get("access_token")
-        refresh_token = request.form.get("refresh_token") or ""
-        senha = request.form.get("senha") or ""
-        confirmar = request.form.get("confirmar_senha") or ""
-
-        if not access_token:
-            flash("Link inválido ou expirado. Solicite a redefinição novamente.")
-            return redirect(url_for("esqueci_senha"))
-
-        erro = None
-        if len(senha) < 6:
-            erro = "A nova senha precisa ter pelo menos 6 caracteres."
-        elif senha != confirmar:
-            erro = "As senhas não são iguais."
-
-        if erro:
-            flash(erro)
-            # Re-renderiza com o token de volta no campo oculto -- um
-            # redirect aqui perderia o fragmento da URL e o usuario
-            # teria que clicar no link do e-mail de novo.
-            return render_template(
-                "redefinir_senha.html", access_token=access_token, refresh_token=refresh_token
-            )
-
-        supabase = conectar()
-        try:
-            supabase.auth.set_session(access_token, refresh_token)
-            supabase.auth.update_user({"password": senha})
-        except Exception:
-            flash("Não foi possível atualizar a senha. O link pode ter expirado — solicite um novo.")
-            return redirect(url_for("esqueci_senha"))
-
-        flash("Senha atualizada! Faça login com a nova senha.")
-        return redirect(url_for("login"))
-
-    # Alguns projetos Supabase mandam o link de recuperacao como
-    # "?code=..." (fluxo PKCE) em vez de "#access_token=..." no
-    # fragmento. O "code" chega pro servidor (e o fragmento nao), entao
-    # da pra trocar por uma sessao aqui mesmo antes de montar a tela.
-    codigo = request.args.get("code")
-    if codigo:
-        supabase = conectar()
-        try:
-            resposta = supabase.auth.exchange_code_for_session({"auth_code": codigo})
-            return render_template(
-                "redefinir_senha.html",
-                access_token=resposta.session.access_token,
-                refresh_token=resposta.session.refresh_token,
-            )
-        except Exception:
-            pass  # cai no formulario normal, que mostra "link invalido"
-
-    return render_template("redefinir_senha.html")
-
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
-
-
-# ------------------------------------------------------------------
-# Visao geral
-# ------------------------------------------------------------------
-
-@app.route("/")
-@com_supabase
-def index(supabase):
-    transacoes = _transacoes(supabase)
-    orcamentos = _orcamentos(supabase)
-    contas = _contas(supabase)
-    mes = _mes_selecionado()
-    do_mes = _do_mes(transacoes, mes)
-
-    cartoes = {_chave_conta(c["nome"]) for c in contas if c.get("tipo") == "Cartão de crédito"}
-    no_cartao = lambda t: _chave_conta(t.get("conta")) in cartoes
-
-    registros_fatura = _faturas(supabase)
-    efetivado = _efetivados(contas, registros_fatura, transacoes)
-    quanto = lambda t: efetivado.get(t["id"], 0.0)
-
-    # No cartao o gasto so entra na medida em que a fatura e paga.
-    pagas = [t for t in do_mes if quanto(t) > 0]
-    gasto = sum(quanto(t) for t in do_mes)
-    # O que esta no cartao e ainda nao foi quitado, pra explicar a diferenca.
-    aguardando_fatura = sum(
-        _valor(t) - quanto(t) for t in do_mes
-        if _e_despesa(t) and no_cartao(t)
-    )
-    receita = sum(_valor(t) for t in do_mes if not _e_despesa(t) and t.get("status") == "pago")
-
-    # Conta pendente = boleto que sai da conta. O que esta no cartao nao
-    # entra aqui: ele e cobrado junto, na fatura.
-    pendente = sum(
-        _valor(t) for t in do_mes
-        if _e_despesa(t) and t.get("status") == "pendente" and not no_cartao(t)
-    )
-    qtd_pendentes = sum(
-        1 for t in do_mes if t.get("status") == "pendente" and not no_cartao(t)
-    )
-
-    orcamento_total = sum(orcamentos.values())
-    restante = orcamento_total - gasto
-
-    # Saldo disponivel: compra no cartao NAO sai da conta na hora -- ela
-    # engorda a fatura, e o desconto acontece quando a fatura e paga.
-    # Descontar aqui contaria o mesmo gasto duas vezes.
-    saldo = sum(_saldos(contas, transacoes, registros_fatura, mes).values())
-
-    faturas = _montar_faturas(transacoes, contas, registros_fatura, mes)
-    faturas_abertas = [f for f in faturas if f["status"] == "pendente" and f["valor"] > 0]
-    fatura_total = sum(f["valor"] for f in faturas_abertas)
-    # A proxima que vence manda no texto do card: e a informacao acionavel.
-    proxima = min(faturas_abertas, key=lambda f: f["vence"]) if faturas_abertas else None
-
-    # Donut por categoria (so despesas pagas).
-    por_categoria = defaultdict(float)
-    for t in pagas:
-        por_categoria[t.get("categoria") or "Outros"] += quanto(t)
-    ordenadas = sorted(por_categoria.items(), key=lambda i: i[1], reverse=True)
-    donut = _donut(ordenadas)
-    top_categoria = ordenadas[0][0] if ordenadas else "Sem categoria"
-
-    # Saude financeira: resume o mes num numero so, a partir do uso do
-    # orcamento, de contas pendentes e de a receita cobrir o gasto.
-    uso_orcamento = min(100, (gasto / orcamento_total * 100)) if orcamento_total else 0
-    saude_score = max(35, min(96, round(
-        100 - uso_orcamento * 0.45
-        - (5 if qtd_pendentes else 0)
-        + (8 if receita > gasto else 0)
-    )))
-    saude_label = "Muito boa" if saude_score >= 75 else "Estável" if saude_score >= 55 else "Em atenção"
-
-    lista_categorias = [
-        {
-            "nome": nome, "valor": valor, "cor": _cor(nome),
-            "pct": (valor / gasto * 100) if gasto else 0,
-        }
-        for nome, valor in ordenadas[:5]
-    ]
-
-    # Linha do mes: gasto acumulado dia a dia.
-    ultimo_dia = _ultimo_dia_do_mes(mes)
-    acumulado, soma = [], 0.0
-    por_dia = defaultdict(float)
-    for t in pagas:
-        por_dia[int(t["data"][8:10])] += quanto(t)
-    for dia in range(1, ultimo_dia + 1):
-        soma += por_dia.get(dia, 0.0)
-        acumulado.append(soma)
-    grafico = _grafico_area(
-        [f"Dia {d}" for d in range(1, ultimo_dia + 1)], acumulado
-    )
-
-    recentes = sorted(do_mes, key=lambda t: (t.get("data") or ""), reverse=True)[:4]
-
-    contexto = _contexto_base(supabase, "overview", transacoes)
-    contexto.update({
-        "saldo": saldo, "gasto": gasto, "receita": receita, "pendente": pendente,
-        "orcamento_total": orcamento_total, "restante": restante,
-        "fatura_total": fatura_total,
-        "faturas_abertas": len(faturas_abertas),
-        "tem_cartao": any(c.get("tipo") == "Cartão de crédito" for c in contas),
-        "proxima_fatura": proxima,
-        "qtd_pendentes": qtd_pendentes,
-        "aguardando_fatura": aguardando_fatura,
-        "pct_orcamento": (gasto / orcamento_total * 100) if orcamento_total else 0,
-        "pct_restante": (max(0, restante) / orcamento_total * 100) if orcamento_total else 0,
-        "donut": donut, "lista_categorias": lista_categorias,
-        "grafico": grafico, "recentes": recentes,
-        "top_categoria": top_categoria,
-        "saude_score": saude_score, "saude_label": saude_label,
-    })
-    return render_template("overview.html", **contexto)
+def _do_mes(transacoes, mes):
+    return [t for t in transacoes if (t.get("data") or "")[:7] == mes]
 
 
 def _ultimo_dia_do_mes(mes):
@@ -1161,140 +375,277 @@ def _ultimo_dia_do_mes(mes):
     return (date(ano, m + 1, 1) - timedelta(days=1)).day
 
 
+def _somar_meses(data_base, n):
+    """Mesma data n meses a frente, encurtando o dia quando o mes destino
+    for mais curto (31/01 + 1 mes -> 28 ou 29/02)."""
+    if isinstance(data_base, str):
+        try:
+            ano, mes, dia = (int(p) for p in data_base[:10].split("-"))
+            data_base = date(ano, mes, dia)
+        except (ValueError, TypeError):
+            data_base = date.today()
+    mes = data_base.month - 1 + n
+    ano = data_base.year + mes // 12
+    mes = mes % 12 + 1
+    bissexto = ano % 4 == 0 and (ano % 100 != 0 or ano % 400 == 0)
+    ultimo = [31, 29 if bissexto else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mes - 1]
+    return date(ano, mes, min(data_base.day, ultimo))
+
+
+def _proximo_lancamento(dia):
+    hoje = date.today()
+    primeiro = date(hoje.year, hoje.month, 1)
+    try:
+        candidato = primeiro.replace(day=dia)
+    except ValueError:
+        candidato = _somar_meses(primeiro, 1) - timedelta(days=1)
+    if candidato < hoje:
+        candidato = _somar_meses(candidato, 1)
+    meses_curto = {1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun",
+                   7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez"}
+    return f"{candidato.day:02d} {meses_curto[candidato.month]}"
+
+
 # ------------------------------------------------------------------
-# Transacoes
+# Ciclo do cartao
+#
+# A fatura nao e um valor digitado: ela e a soma do que foi lancado no
+# cartao dentro do ciclo. Compra feita depois do fechamento ja cai na
+# fatura do mes que vem, que e como cartao funciona de verdade.
 # ------------------------------------------------------------------
 
-@app.route("/transacoes")
-@com_supabase
-def transacoes(supabase):
-    todas = _transacoes(supabase)
-    do_mes = _do_mes(todas, _mes_selecionado())
+def _mes_da_fatura(data_iso, fechamento):
+    """Em qual fatura (YYYY-MM) a compra cai. A fatura leva o mes em que FECHA:
+    ate o dia do fechamento (inclusive) a compra fica nela, mesmo que ela ja
+    tenha sido paga; so o que passa do fechamento vai pra fatura seguinte."""
+    ano, mes, dia = int(data_iso[:4]), int(data_iso[5:7]), int(data_iso[8:10])
+    if dia > fechamento:
+        return _somar_meses(date(ano, mes, 1), 1).strftime("%Y-%m")
+    return f"{ano:04d}-{mes:02d}"
 
-    busca = (request.args.get("q") or "").strip().lower()
-    tipo = request.args.get("tipo") or "todos"
-    status = request.args.get("status") or "todos"
-    categoria = request.args.get("categoria") or "todas"
 
-    linhas = []
-    for t in do_mes:
-        texto = f"{t.get('nome_despesa','')} {t.get('categoria','')} {t.get('conta','')}".lower()
-        if busca and busca not in texto:
+def _vencimento_da_fatura(mes, fechamento, vencimento):
+    base = date(int(mes[:4]), int(mes[5:7]), 1)
+    if vencimento <= fechamento:
+        base = _somar_meses(base, 1)
+    dia = min(vencimento, _ultimo_dia_do_mes(base.strftime("%Y-%m")))
+    return date(base.year, base.month, dia)
+
+
+def _saldo_conta(conta, transacoes):
+    """Saldo atual da conta: o saldo cadastrado (inicial) mais tudo que ja
+    foi pago nela ate hoje. Tudo calculado na hora, nada gravado em
+    contas.saldo -- assim pagar/estornar fatura nunca fica dessincronizado.
+    Lancamento com data futura (ex.: parcelas dos proximos meses) ainda nao
+    saiu da conta, entao so entra quando a data chega."""
+    total = float(conta.get("saldo") or 0)
+    chave = _chave_conta(conta["nome"])
+    hoje = date.today().isoformat()
+    for t in transacoes:
+        if _chave_conta(t.get("conta")) != chave or t.get("status") != "pago":
             continue
-        if tipo != "todos" and t.get("tipo", "despesa") != tipo:
+        if (t.get("data") or "")[:10] > hoje:
             continue
-        if status != "todos" and t.get("status", "pago") != status:
+        total += -_valor(t) if _e_despesa(t) else _valor(t)
+    return round(total, 2)
+
+
+def _compras_do_ciclo(transacoes, cartao, ciclo):
+    """Soma das compras (receita/estorno no cartao abate) lancadas nesse
+    cartao que caem no ciclo pedido -- nunca inclui quitacao de fatura
+    (fatura_id/fatura_pagamento_id) nem transferencia."""
+    chave = _chave_conta(cartao["nome"])
+    fechamento = int(cartao.get("fechamento") or 28)
+    total = 0.0
+    for t in transacoes:
+        if _chave_conta(t.get("conta")) != chave or not t.get("data"):
             continue
-        if categoria != "todas" and t.get("categoria") != categoria:
+        if t.get("kind") == "transfer" or t.get("fatura_id") or t.get("fatura_pagamento_id"):
             continue
-        linhas.append(t)
-    linhas.sort(key=lambda t: (t.get("data") or ""), reverse=True)
-
-    # Conta que nao existe mais deixa a transacao orfa: ela para de ser
-    # reconhecida como do cartao e passa a contar como gasto na hora.
-    conhecidas = {_chave_conta(c["nome"]) for c in _contas(supabase)}
-    for t in linhas:
-        t["conta_orfa"] = bool(t.get("conta")) and _chave_conta(t["conta"]) not in conhecidas
-
-    contexto = _contexto_base(supabase, "transactions", todas)
-    contexto.update({
-        "linhas": linhas,
-        "filtros": {"q": busca, "tipo": tipo, "status": status, "categoria": categoria},
-    })
-    return render_template("transacoes.html", **contexto)
+        if _mes_da_fatura(t["data"], fechamento) != ciclo:
+            continue
+        total += _valor(t) if _e_despesa(t) else -_valor(t)
+    return total
 
 
-@app.route("/transacao/salvar", methods=["POST"])
-@com_supabase
-def salvar_transacao(supabase):
-    id_transacao = request.form.get("id_despesa")
-    nome = (request.form.get("nome_despesa") or "").strip()
-    total = _numero(request.form.get("valor"))
-    parcelas = max(1, int(_numero(request.form.get("parcelas"), 1)))
-    data_base = request.form.get("data") or date.today().isoformat()
+def _ciclos_do_cartao(transacoes, cartao):
+    """Todos os ciclos (YYYY-MM) que ja tiveram alguma compra nesse cartao."""
+    chave = _chave_conta(cartao["nome"])
+    fechamento = int(cartao.get("fechamento") or 28)
+    ciclos = set()
+    for t in transacoes:
+        if _chave_conta(t.get("conta")) != chave or not t.get("data"):
+            continue
+        if t.get("kind") == "transfer" or t.get("fatura_id") or t.get("fatura_pagamento_id"):
+            continue
+        ciclos.add(_mes_da_fatura(t["data"], fechamento))
+    return ciclos
 
-    if not nome or total <= 0:
-        flash("Informe uma descrição e um valor válido.")
-        return _voltar()
 
-    tipo = "receita" if request.form.get("tipo") == "receita" else "despesa"
-    categoria = request.form.get("categoria") or "Outros"
-    conta = request.form.get("conta") or None
+def _pago_legado(supabase, transacoes):
+    """Pagamentos feitos pelo mecanismo ANTIGO (fatura_id -> tabela
+    faturas), de antes desta migracao -- soma por (conta_id, ciclo) pra
+    somar certinho com o motor novo e nao perder historico."""
+    registros = {f["id"]: f for f in _faturas(supabase)}
+    total = defaultdict(float)
+    for t in transacoes:
+        fid = t.get("fatura_id")
+        if fid and fid in registros:
+            r = registros[fid]
+            total[(r["conta_id"], r["mes"])] += _valor(t)
+    return total
 
-    # O formulario ja filtra as opcoes, mas a regra tem que valer aqui: o
-    # que chega por POST nao passou necessariamente pela tela.
-    if tipo == "receita":
-        categoria = "Receita"
-        parcelas = 1
-        # Receita nao cai em cartao de credito -- cartao e divida, nao entrada.
-        if conta and _chave_conta(conta) in {
-            _chave_conta(c["nome"]) for c in _contas(supabase)
-            if c.get("tipo") == "Cartão de crédito"
-        }:
-            conta = None
-    elif categoria == "Receita":
-        categoria = "Outros"
 
-    campos = {
-        "nome_despesa": nome,
-        "descricao": (request.form.get("descricao") or "").strip(),
-        "categoria": categoria,
-        "tipo": tipo,
-        "conta": conta,
-        "status": "pendente" if request.form.get("status") == "pendente" else "pago",
-        "recorrente": request.form.get("recorrente") == "on",
+def _pago_novo(supabase, conta_id=None, ciclo=None):
+    """Soma dos pagamentos ATIVOS (nao estornados) do motor novo, por
+    (conta_id, ciclo)."""
+    consulta = supabase.table("fatura_pagamentos").select("conta_id,ciclo,valor") \
+        .eq("user_id", _uid()).eq("status", "active")
+    if conta_id is not None:
+        consulta = consulta.eq("conta_id", conta_id)
+    if ciclo is not None:
+        consulta = consulta.eq("ciclo", ciclo)
+    total = defaultdict(float)
+    for linha in consulta.execute().data or []:
+        total[(linha["conta_id"], linha["ciclo"])] += float(linha["valor"] or 0)
+    return total
+
+
+def _ajustes_ativos(supabase, conta_id=None, ciclo=None):
+    """Soma dos ajustes manuais ATIVOS, por (conta_id, ciclo)."""
+    consulta = supabase.table("fatura_ajustes").select("conta_id,ciclo,valor") \
+        .eq("user_id", _uid()).eq("status", "active")
+    if conta_id is not None:
+        consulta = consulta.eq("conta_id", conta_id)
+    if ciclo is not None:
+        consulta = consulta.eq("ciclo", ciclo)
+    total = defaultdict(float)
+    for linha in consulta.execute().data or []:
+        total[(linha["conta_id"], linha["ciclo"])] += float(linha["valor"] or 0)
+    return total
+
+
+def _pago_total(supabase, transacoes, conta_id=None, ciclo=None):
+    """Legado + novo, somados -- fonte unica de 'quanto ja foi pago'."""
+    legado = _pago_legado(supabase, transacoes)
+    novo = _pago_novo(supabase, conta_id, ciclo)
+    if conta_id is not None or ciclo is not None:
+        legado = {
+            k: v for k, v in legado.items()
+            if (conta_id is None or k[0] == conta_id) and (ciclo is None or k[1] == ciclo)
+        }
+    chaves = set(legado) | set(novo)
+    return {k: legado.get(k, 0.0) + novo.get(k, 0.0) for k in chaves}
+
+
+def _cartao_usado(supabase, transacoes, cartao):
+    """Compromisso total do cartao: o que se deve em CADA ciclo (nao so o
+    mes corrente) -- o que o front chama de 'commitment().used'. Credito
+    (estorno numa fatura ainda sem compras, pagamento a mais) abate o que
+    se deve nas outras faturas: o limite volta mesmo quando o estorno cai
+    num ciclo vazio. Nunca fica abaixo de zero."""
+    ciclos = _ciclos_do_cartao(transacoes, cartao)
+    pagos = _pago_total(supabase, transacoes, conta_id=cartao["id"])
+    ajustes = _ajustes_ativos(supabase, conta_id=cartao["id"])
+    ciclos |= {c for (_, c) in pagos} | {c for (_, c) in ajustes}
+
+    total = 0.0
+    for ciclo in ciclos:
+        compras = _compras_do_ciclo(transacoes, cartao, ciclo)
+        bruto = compras + ajustes.get((cartao["id"], ciclo), 0.0)
+        pago = pagos.get((cartao["id"], ciclo), 0.0)
+        total += bruto - pago
+    return round(max(0.0, total), 2)
+
+
+# ------------------------------------------------------------------
+# Recorrencias automaticas
+# ------------------------------------------------------------------
+
+def _data_iso(valor):
+    """'2026-09-19T00:11:43...' -> date(2026, 9, 19); None se nao der pra ler."""
+    try:
+        return date.fromisoformat(str(valor)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _lancar_recorrentes(supabase):
+    """Cria em Transacoes as recorrencias cujo dia do mes ja chegou.
+
+    Nao existe cron aqui (deploy serverless): a geracao acontece na
+    primeira chamada autenticada do dia (ver /api/v1/bootstrap).
+
+    Uma regra so lanca a partir da PROXIMA ocorrencia depois de criada: o dia
+    deste mes que ja tinha passado antes de ela existir nao e lancado
+    retroativamente (uma assinatura criada dia 10 com "todo dia 1" comeca no
+    dia 1 do mes seguinte, nao lanca um dia 1 que ja foi).
+
+    Idempotencia: se o mes ja tem lancamento da regra, nao cria outro. Vale o
+    vinculo por recorrente_id e tambem o lancamento feito na mao com "repetir
+    mensalmente" (que nao carrega o id da regra): mesmo nome, tipo e valor.
+    """
+    hoje = date.today()
+    mes = hoje.strftime("%Y-%m")
+    proximo_mes = _somar_meses(date(hoje.year, hoje.month, 1), 1).strftime("%Y-%m")
+
+    regras = [r for r in _recorrentes(supabase) if r.get("ativo")]
+    if not regras:
+        return 0
+
+    do_mes = (
+        supabase.table("despesas").select("recorrente_id, nome_despesa, valor, tipo, recorrente")
+        .eq("user_id", _uid()).gte("data", f"{mes}-01").lt("data", f"{proximo_mes}-01")
+        .execute().data or []
+    )
+    ja_lancadas = {d["recorrente_id"] for d in do_mes if d.get("recorrente_id")}
+    manuais = {
+        (_chave_categoria(d.get("nome_despesa")), d.get("tipo") or "despesa", round(float(d.get("valor") or 0), 2))
+        for d in do_mes if d.get("recorrente") and not d.get("recorrente_id")
+    }
+    cartoes = {
+        _chave_conta(c["nome"]) for c in _contas(supabase)
+        if c.get("tipo") == "Cartão de crédito"
     }
 
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        if parcelas > 1:
-            return _bloquear_por_plano(
-                "Parcelar uma compra é um recurso do plano Synch IA. Assine para dividir em várias vezes."
-            )
-        if campos["recorrente"]:
-            return _bloquear_por_plano(
-                "Repetir uma transação todo mês é um recurso do plano Synch IA. Assine para automatizar lançamentos fixos."
-            )
-        if not id_transacao:
-            mes_lancamento = (data_base or "")[:7]
-            no_mes = sum(
-                1 for t in _transacoes(supabase)
-                if (t.get("data") or "")[:7] == mes_lancamento
-            )
-            if no_mes >= LIMITE_GRATIS_TRANSACOES_MES:
-                return _bloquear_por_plano(
-                    f"O plano Grátis permite até {LIMITE_GRATIS_TRANSACOES_MES} movimentações por mês. "
-                    "Assine o Synch IA para lançar sem limite."
-                )
+    novas = []
+    for r in regras:
+        if r["id"] in ja_lancadas:
+            continue
+        assinatura = (_chave_categoria(r.get("nome")), r.get("tipo") or "despesa", round(float(r.get("valor") or 0), 2))
+        if assinatura in manuais:
+            continue
+        dia = max(1, min(int(r.get("dia") or 1), _ultimo_dia_do_mes(mes)))
+        if hoje.day < dia:
+            continue
+        criada_em = _data_iso(r.get("criado_em"))
+        if criada_em and date(hoje.year, hoje.month, dia) <= criada_em:
+            continue
+        no_cartao = _chave_conta(r.get("conta")) in cartoes
+        novas.append({
+            "user_id": _uid(),
+            "nome_despesa": r["nome"],
+            "descricao": "Lançamento automático",
+            "categoria": r.get("categoria") or "Outros",
+            "tipo": r.get("tipo") or "despesa",
+            "conta": r.get("conta"),
+            "status": "pago" if no_cartao else "pendente",
+            "valor": float(r.get("valor") or 0),
+            "data": f"{mes}-{dia:02d}",
+            "recorrente": True,
+            "recorrente_id": r["id"],
+        })
 
-    if id_transacao:
-        supabase.table("despesas").update({**campos, "valor": total, "data": data_base}) \
-            .eq("id", id_transacao).eq("user_id", _uid()).execute()
-        # Marcar "repetir mensalmente" ao EDITAR tambem tem que criar a regra.
-        # Antes esse caminho retornava antes do bloco que a cria, entao a
-        # opcao so tinha efeito no momento de cadastrar a transacao.
-        criada = _criar_recorrente(supabase, campos, total, data_base)
-        flash("Transação atualizada. Recorrência criada." if criada else "Transação atualizada.")
-        return _voltar()
-
-    novas = _parcelas(campos, nome, total, parcelas, data_base)
-    supabase.table("despesas").insert(novas).execute()
-
-    # "Repetir mensalmente" tambem cria a regra na tela de recorrentes.
-    _criar_recorrente(supabase, campos, novas[0]["valor"], data_base)
-
-    flash(_confirmacao_lancamento(supabase, campos["conta"], data_base, parcelas))
-    return _voltar()
+    if novas:
+        supabase.table("despesas").insert(novas).execute()
+    return len(novas)
 
 
 def _criar_recorrente(supabase, campos, valor, data_base):
-    """Cria a regra em Recorrentes quando 'repetir mensalmente' esta marcado.
-
-    Vale pra despesa e pra receita. Nao duplica: marcar de novo a mesma
-    transacao (ou reeditar) nao gera uma segunda regra igual.
-    """
+    """Cria a regra em Recorrentes quando 'repetir mensalmente' esta
+    marcado. Vale pra despesa e pra receita. Nao duplica."""
     if not campos.get("recorrente"):
         return False
-
     chave = _chave_conta(campos.get("conta"))
     ja_existe = any(
         r.get("nome") == campos["nome_despesa"] and _chave_conta(r.get("conta")) == chave
@@ -1302,21 +653,13 @@ def _criar_recorrente(supabase, campos, valor, data_base):
     )
     if ja_existe:
         return False
-
     try:
         dia = max(1, min(28, int(data_base[8:10])))
     except (ValueError, TypeError):
         dia = 1
-
     supabase.table("recorrentes").insert({
-        "user_id": _uid(),
-        "nome": campos["nome_despesa"],
-        "categoria": campos["categoria"],
-        "tipo": campos["tipo"],
-        "conta": campos["conta"],
-        "valor": valor,
-        "dia": dia,
-        "ativo": True,
+        "user_id": _uid(), "nome": campos["nome_despesa"], "categoria": campos["categoria"],
+        "tipo": campos["tipo"], "conta": campos["conta"], "valor": valor, "dia": dia, "ativo": True,
     }).execute()
     return True
 
@@ -1341,166 +684,464 @@ def _parcelas(campos, nome, total, parcelas, data_base):
     ]
 
 
-def _confirmacao_lancamento(supabase, nome_conta, data_base, parcelas):
-    """Mensagem do lancamento, dizendo onde ele foi parar.
+# ------------------------------------------------------------------
+# Serializacao: linhas do banco (portugues) -> modelo do front (ingles),
+# igual ao que esta em lib/models.ts do synch-cash-frontend.
+# ------------------------------------------------------------------
 
-    Duas coisas podem jogar o lancamento pra fora do mes que esta na tela:
-    a data escolhida e o fechamento do cartao. Nos dois casos ele some da
-    vista, e sem aviso parece que nao foi salvo."""
-    base = f"{parcelas} parcelas adicionadas." if parcelas > 1 else "Transação adicionada."
-    exibido = _mes_selecionado()
-    nome_mes = lambda m: MESES_PT[int(m[5:7])].lower()
+def _serializar_transacao(t, contas_por_nome):
+    conta_info = contas_por_nome.get(_chave_conta(t.get("conta")))
+    cartao_id = conta_info["id"] if conta_info and conta_info.get("tipo") == "Cartão de crédito" else None
+    ciclo = None
+    if cartao_id and t.get("data"):
+        ciclo = _mes_da_fatura(t["data"], int(conta_info.get("fechamento") or 28))
+    return {
+        "id": t["id"],
+        "description": t.get("nome_despesa") or "",
+        "category": t.get("categoria") or "Outros",
+        "date": (t.get("data") or "")[:10],
+        "amount": _valor(t),
+        "type": "income" if not _e_despesa(t) else "expense",
+        "account": t.get("conta") or "",
+        "status": "pending" if t.get("status") == "pendente" and not cartao_id else "paid",
+        "notes": t.get("descricao") or None,
+        "recurring": bool(t.get("recorrente")),
+        "merchant": t.get("merchant"),
+        "paymentMethod": t.get("payment_method"),
+        "kind": t.get("kind") or "purchase",
+        "receiptName": t.get("receipt_name"),
+        "qualityResolved": bool(t.get("quality_resolved")),
+        "transferPairId": t.get("transfer_pair_id"),
+        "cardId": cartao_id,
+        "invoiceCycle": ciclo,
+        "invoicePaymentId": t.get("fatura_pagamento_id"),
+    }
 
-    cartao = next(
-        (c for c in _contas(supabase)
-         if c["nome"] == nome_conta and c.get("tipo") == "Cartão de crédito"),
-        None,
-    )
 
-    if cartao:
-        fechamento = int(cartao.get("fechamento") or 28)
-        mes_fatura = _mes_da_fatura(data_base, fechamento)
-        if mes_fatura != data_base[:7]:
-            return (
-                f"{base} A compra passou do fechamento (dia {fechamento}), "
-                f"então entrou na fatura de {nome_mes(mes_fatura)} do {nome_conta}."
+def _serializar_conta(c, saldo):
+    return {
+        "id": c["id"],
+        "name": c.get("nome") or "",
+        "type": c.get("tipo") or "Conta corrente",
+        "balance": round(saldo, 2),
+        "detail": c.get("detalhe") or "",
+        "color": c.get("cor") or "#22c55e",
+        "creditLimit": c.get("limite_credito"),
+        "closingDay": c.get("fechamento"),
+        "dueDay": c.get("vencimento"),
+        "lastFour": c.get("ultimos_digitos"),
+    }
+
+
+def _serializar_meta(m):
+    guardado, alvo = float(m.get("guardado") or 0), float(m.get("alvo") or 0)
+    return {
+        "id": m["id"], "name": m.get("nome") or "", "saved": guardado,
+        "target": alvo, "deadline": m.get("prazo") or "Sem prazo",
+        "color": m.get("cor") or "#22c55e",
+    }
+
+
+def _serializar_recorrente(r):
+    return {
+        "id": r["id"], "name": r.get("nome") or "",
+        "category": r.get("categoria") or "Outros",
+        "amount": float(r.get("valor") or 0),
+        "type": "income" if r.get("tipo") == "receita" else "expense",
+        "next": _proximo_lancamento(int(r.get("dia") or 1)),
+        "day": max(1, min(28, int(r.get("dia") or 1))),
+        "active": bool(r.get("ativo")),
+    }
+
+
+def _serializar_preferencias(p, email):
+    return {
+        "name": p.get("nome") or "Usuário",
+        "email": email or "",
+        "notifications": bool(p.get("notificacoes", True)),
+        "weekly": bool(p.get("resumo_semanal", True)),
+    }
+
+
+def _serializar_pagamento(p, nomes_conta):
+    return {
+        "id": p["id"],
+        "transactionId": p.get("transacao_id"),
+        "reversalTransactionId": p.get("transacao_estorno_id"),
+        "cardId": p["conta_id"],
+        "cardName": nomes_conta.get(p["conta_id"], ""),
+        "cycle": p["ciclo"],
+        "sourceAccountId": p["conta_origem_id"],
+        "sourceAccountName": nomes_conta.get(p["conta_origem_id"], ""),
+        "amount": float(p["valor"]),
+        "date": p["data"],
+        "mode": p["modo"],
+        "status": p["status"],
+        "createdAt": p.get("criado_em"),
+        "reversedAt": p.get("revertido_em"),
+        "idempotencyKey": p["idempotency_key"],
+    }
+
+
+def _serializar_ajuste(a):
+    return {
+        "id": str(a["id"]), "cardId": a["conta_id"], "cycle": a["ciclo"],
+        "amount": float(a["valor"]), "reason": a.get("motivo") or "",
+        "createdAt": a.get("criado_em"), "status": a["status"],
+        "reversedAt": a.get("revertido_em"),
+    }
+
+
+# ------------------------------------------------------------------
+# Autenticacao
+# ------------------------------------------------------------------
+
+@app.route("/api/v1/auth/login", methods=["POST"])
+def api_login():
+    corpo = _corpo()
+    email = (corpo.get("email") or "").strip()
+    senha = corpo.get("password") or ""
+    if not email or not senha:
+        return json_error("VALIDATION", "Informe e-mail e senha.", 422)
+
+    supabase = conectar()
+    try:
+        resposta = supabase.auth.sign_in_with_password({"email": email, "password": senha})
+    except Exception:
+        return json_error("INVALID_CREDENTIALS", "E-mail ou senha inválidos.", 401)
+
+    session.permanent = bool(corpo.get("remember", True))
+    session["access_token"] = resposta.session.access_token
+    session["refresh_token"] = resposta.session.refresh_token
+    session["user_id"] = resposta.user.id
+    session["email"] = resposta.user.email
+
+    # Rede de seguranca: se a Cakto avisou um pagamento antes desta conta
+    # existir (webhook guardou em cakto_pendencias), aplica aqui tambem --
+    # nao deveria sobrar nenhuma, mas login e barato e nunca deve travar por isso.
+    try:
+        _aplicar_pendencia_cakto(conectar_admin(), resposta.user.id, resposta.user.email)
+    except Exception:
+        pass
+
+    logado = conectar_como_usuario(session["access_token"])
+    return json_ok({"user": _serializar_preferencias(_preferencias(logado), session["email"])})
+
+
+@app.route("/api/v1/auth/register", methods=["POST"])
+def api_register():
+    corpo = _corpo()
+    email = (corpo.get("email") or "").strip()
+    senha = corpo.get("password") or ""
+    nome = (corpo.get("name") or "").strip()
+    if not email or len(senha) < 6:
+        return json_error("VALIDATION", "Informe e-mail e uma senha com pelo menos 6 caracteres.", 422)
+
+    supabase = conectar()
+    try:
+        opcoes = {"data": {"nome": nome}} if nome else {}
+        resposta = supabase.auth.sign_up({"email": email, "password": senha, "options": opcoes})
+    except Exception as erro:
+        return json_error("AUTH_ERROR", _mensagem_erro_auth(erro), 422)
+
+    # Se essa pessoa ja pagou na Cakto com esse e-mail antes de criar a conta,
+    # o webhook guardou o plano em cakto_pendencias (sem conta ainda, sem
+    # user_id pra marcar). Agora que a conta existe, aplica de uma vez --
+    # sem isso, quem pagou primeiro e cadastrou depois ficaria no Gratis.
+    try:
+        usuario_id = getattr(resposta.user, "id", None) if resposta and resposta.user else None
+        if usuario_id:
+            _aplicar_pendencia_cakto(conectar_admin(), usuario_id, email)
+    except Exception:
+        pass
+
+    return json_ok({
+        "user": {"name": nome or email.split("@")[0], "email": email, "notifications": True, "weekly": True},
+        "needsEmailConfirmation": True,
+    }, 201)
+
+
+@app.route("/api/v1/auth/forgot-password", methods=["POST"])
+def api_forgot_password():
+    corpo = _corpo()
+    email = (corpo.get("email") or "").strip()
+    if email:
+        supabase = conectar()
+        try:
+            supabase.auth.reset_password_for_email(
+                email, {"redirect_to": _frontend_url("/redefinir-senha")}
             )
-        return f"{base} Entrou na fatura de {nome_mes(mes_fatura)} do {nome_conta}."
+        except AuthApiError as erro:
+            if erro.code == "over_email_send_rate_limit":
+                return json_error("RATE_LIMITED", _mensagem_erro_auth(erro), 429)
+        except Exception:
+            pass
+    # Mensagem igual sempre que o e-mail exista ou nao -- evita que alguem
+    # descubra quais e-mails estao cadastrados por tentativa.
+    return json_ok({"message": "Se o e-mail estiver cadastrado, enviamos um link para redefinir a senha."})
 
-    if data_base[:7] != exibido:
-        return (
-            f"{base} A data é de {nome_mes(data_base[:7])}, "
-            f"mas você está vendo {nome_mes(exibido)} — por isso ela não aparece na lista."
-        )
-    return base
+
+@app.route("/api/v1/auth/reset-password/exchange", methods=["POST"])
+def api_reset_password_exchange():
+    """Fluxo PKCE: a pagina de redefinicao troca o ?code=... da URL por um
+    access/refresh token antes de deixar digitar a senha nova."""
+    codigo = _corpo().get("code")
+    if not codigo:
+        return json_error("INVALID_TOKEN", "Link inválido ou expirado.", 422)
+    supabase = conectar()
+    try:
+        resposta = supabase.auth.exchange_code_for_session({"auth_code": codigo})
+    except Exception:
+        return json_error("INVALID_TOKEN", "Link inválido ou expirado.", 422)
+    return json_ok({
+        "accessToken": resposta.session.access_token,
+        "refreshToken": resposta.session.refresh_token,
+    })
 
 
-@app.route("/transacao/deletar", methods=["POST"])
+@app.route("/api/v1/auth/reset-password/confirm", methods=["POST"])
+def api_reset_password_confirm():
+    """Segunda metade do 'esqueci minha senha': recebe o token que veio no
+    fragmento (#access_token=...) ou da troca via /exchange e grava a
+    senha nova de verdade no Supabase Auth."""
+    corpo = _corpo()
+    access_token = corpo.get("accessToken")
+    refresh_token = corpo.get("refreshToken") or ""
+    nova = corpo.get("newPassword") or ""
+    if not access_token:
+        return json_error("INVALID_TOKEN", "Link inválido ou expirado.", 422)
+    if len(nova) < 6:
+        return json_error("VALIDATION", "A nova senha precisa ter pelo menos 6 caracteres.", 422)
+
+    supabase = conectar()
+    try:
+        supabase.auth.set_session(access_token, refresh_token)
+        supabase.auth.update_user({"password": nova})
+    except Exception:
+        return json_error("AUTH_ERROR", "Não foi possível atualizar a senha. O link pode ter expirado.", 422)
+    return json_ok({"message": "Senha atualizada."})
+
+
+@app.route("/api/v1/auth/password", methods=["PUT"])
 @com_supabase
-def deletar_transacao(supabase):
-    """Apaga a transacao. Se ela for parcela de uma compra, apaga a compra
-    inteira -- as outras parcelas estao nos meses seguintes e ficariam
-    orfas, obrigando a caçar uma por uma mes a mes.
+def api_trocar_senha(supabase):
+    nova = _corpo().get("newPassword") or ""
+    if len(nova) < 6:
+        return json_error("VALIDATION", "A nova senha precisa ter pelo menos 6 caracteres.", 422)
+    try:
+        supabase.auth.update_user({"password": nova})
+    except Exception:
+        return json_error("AUTH_ERROR", "Não foi possível atualizar a senha.", 422)
+    return "", 204
 
-    O grupo vem do banco, nao do formulario: assim o que e apagado depende
-    da linha pedida, e nao de um valor que veio do cliente.
-    """
-    id_transacao = request.form["id_despesa"]
 
-    linha = (
-        supabase.table("despesas").select("grupo_parcela, fatura_id")
-        .eq("id", id_transacao).eq("user_id", _uid()).execute().data
-    )
-    if not linha:
-        flash("Transação não encontrada.")
-        return _voltar()
+@app.route("/api/v1/auth/logout", methods=["POST"])
+def api_logout():
+    session.clear()
+    return "", 204
 
-    # Apagar um pagamento desconta so o valor dele do que ja foi quitado --
-    # com pagamentos parciais, zerar tudo apagaria os outros pagamentos.
-    id_fatura = linha[0].get("fatura_id")
-    if id_fatura:
-        valor = float(linha[0].get("valor") or 0)
-        supabase.table("despesas").delete() \
-            .eq("id", id_transacao).eq("user_id", _uid()).execute()
 
-        # Sobrou algum outro pagamento nesta fatura? O total vem deles.
-        restantes = (
-            supabase.table("despesas").select("id")
-            .eq("fatura_id", id_fatura).eq("user_id", _uid()).execute().data
+# ------------------------------------------------------------------
+# Bootstrap: tudo que o painel precisa pra carregar de uma vez
+# ------------------------------------------------------------------
+
+@app.route("/api/v1/bootstrap")
+@com_supabase
+def api_bootstrap(supabase):
+    hoje = date.today().isoformat()
+    if session.get("recorrentes_em") != hoje:
+        session["recorrentes_em"] = hoje
+        try:
+            _lancar_recorrentes(supabase)
+        except Exception:
+            session.pop("recorrentes_em", None)
+
+    contas = _contas(supabase)
+    transacoes = _transacoes(supabase)
+    contas_por_nome = {_chave_conta(c["nome"]): c for c in contas}
+    nomes_conta = {c["id"]: c["nome"] for c in contas}
+
+    saldos = {}
+    for c in contas:
+        saldos[c["id"]] = (
+            _cartao_usado(supabase, transacoes, c) if c.get("tipo") == "Cartão de crédito"
+            else _saldo_conta(c, transacoes)
         )
-        if restantes:
-            flash(f"Pagamento de {brl(valor)} desfeito.")
-        else:
+
+    pagamentos = supabase.table("fatura_pagamentos").select("*") \
+        .eq("user_id", _uid()).order("id").execute().data or []
+    ajustes = supabase.table("fatura_ajustes").select("*") \
+        .eq("user_id", _uid()).order("id").execute().data or []
+
+    return json_ok({
+        "transactions": [_serializar_transacao(t, contas_por_nome) for t in transacoes],
+        "accounts": [_serializar_conta(c, saldos.get(c["id"], 0.0)) for c in contas],
+        "invoicePayments": [_serializar_pagamento(p, nomes_conta) for p in pagamentos],
+        "invoiceAdjustments": [_serializar_ajuste(a) for a in ajustes],
+        "budgets": _orcamentos(supabase),
+        "categories": _nomes_categorias(supabase, transacoes),
+        "recurring": [_serializar_recorrente(r) for r in _recorrentes(supabase)],
+        "goals": [_serializar_meta(m) for m in _metas(supabase)],
+        "preferences": _serializar_preferencias(_preferencias(supabase), session.get("email")),
+        "plan": _plano_usuario(supabase),
+    })
+
+
+# ------------------------------------------------------------------
+# Transacoes
+# ------------------------------------------------------------------
+
+def _validar_transacao_payload(corpo, contas):
+    descricao = (corpo.get("description") or "").strip()
+    valor = corpo.get("amount")
+    if not descricao or not isinstance(valor, (int, float)) or valor <= 0:
+        return None, json_error("VALIDATION", "Informe uma descrição e um valor válido.", 422)
+
+    tipo = "receita" if corpo.get("type") == "income" else "despesa"
+    categoria = corpo.get("category") or "Outros"
+    conta_nome = corpo.get("account") or None
+
+    cartoes = {_chave_conta(c["nome"]) for c in contas if c.get("tipo") == "Cartão de crédito"}
+    no_cartao = bool(conta_nome) and _chave_conta(conta_nome) in cartoes
+    if tipo == "receita":
+        categoria = "Receita"
+    elif categoria == "Receita":
+        categoria = "Outros"
+
+    # Receita no cartao e estorno: fica ligada ao cartao e abate a fatura do ciclo (devolve o valor ao
+    # limite). Antes a conta era solta e o estorno nunca chegava ao cartao.
+    # Compra no cartao nunca fica pendente: quem esta pendente e a fatura, nao a compra.
+    kind = corpo.get("kind") or "purchase"
+    if no_cartao:
+        kind = "refund" if tipo == "receita" else ("purchase" if kind == "refund" else kind)
+
+    campos = {
+        "nome_despesa": descricao,
+        "descricao": (corpo.get("notes") or "").strip(),
+        "categoria": categoria,
+        "tipo": tipo,
+        "conta": conta_nome,
+        "status": "pendente" if corpo.get("status") == "pending" and not no_cartao else "pago",
+        "recorrente": bool(corpo.get("recurring")),
+        "merchant": corpo.get("merchant"),
+        "payment_method": corpo.get("paymentMethod"),
+        "kind": kind,
+    }
+    return campos, None
+
+
+@app.route("/api/v1/transactions", methods=["POST"])
+@com_supabase
+def api_criar_transacao(supabase):
+    corpo = _corpo()
+    contas = _contas(supabase)
+    campos, erro = _validar_transacao_payload(corpo, contas)
+    if erro:
+        return erro
+
+    total = float(corpo.get("amount"))
+    parcelas = max(1, int(corpo.get("installments") or 1))
+    data_base = corpo.get("date") or date.today().isoformat()
+
+    plano = _plano_usuario(supabase)
+    if not _plano_permite(plano, "synch_ia"):
+        if parcelas > 1:
+            return _erro_plano("Parcelar uma compra é um recurso do plano Synch IA. Assine para dividir em várias vezes.")
+        if campos["recorrente"]:
+            return _erro_plano("Repetir uma transação todo mês é um recurso do plano Synch IA. Assine para automatizar lançamentos fixos.")
+        mes_lancamento = data_base[:7]
+        no_mes = sum(1 for t in _transacoes(supabase) if (t.get("data") or "")[:7] == mes_lancamento)
+        if no_mes >= LIMITE_GRATIS_TRANSACOES_MES:
+            return _erro_plano(
+                f"O plano Grátis permite até {LIMITE_GRATIS_TRANSACOES_MES} movimentações por mês. "
+                "Assine o Synch IA para lançar sem limite."
+            )
+
+    novas = _parcelas(campos, campos["nome_despesa"], total, parcelas, data_base)
+    criadas = supabase.table("despesas").insert(novas).execute().data or []
+    _criar_recorrente(supabase, campos, novas[0]["valor"], data_base)
+
+    contas_por_nome = {_chave_conta(c["nome"]): c for c in contas}
+    return json_ok([_serializar_transacao(t, contas_por_nome) for t in criadas], 201)
+
+
+@app.route("/api/v1/transactions/<int:id_transacao>", methods=["PUT"])
+@com_supabase
+def api_editar_transacao(supabase, id_transacao):
+    corpo = _corpo()
+    contas = _contas(supabase)
+    campos, erro = _validar_transacao_payload(corpo, contas)
+    if erro:
+        return erro
+
+    total = float(corpo.get("amount"))
+    data_base = corpo.get("date") or date.today().isoformat()
+
+    atualizada = supabase.table("despesas").update({**campos, "valor": total, "data": data_base}) \
+        .eq("id", id_transacao).eq("user_id", _uid()).execute().data
+    if not atualizada:
+        return json_error("NOT_FOUND", "Transação não encontrada.", 404)
+    _criar_recorrente(supabase, campos, total, data_base)
+
+    contas_por_nome = {_chave_conta(c["nome"]): c for c in contas}
+    return json_ok(_serializar_transacao(atualizada[0], contas_por_nome))
+
+
+@app.route("/api/v1/transactions/<int:id_transacao>", methods=["DELETE"])
+@com_supabase
+def api_deletar_transacao(supabase, id_transacao):
+    """Apaga a transacao. Parcela apaga a compra inteira (mesmo grupo).
+    Transferencia apaga o par junto. Pagamento de fatura e protegido --
+    use POST /invoice-payments/:id/reverse pra desfazer esse."""
+    linha = supabase.table("despesas").select("grupo_parcela, fatura_id, fatura_pagamento_id, transfer_pair_id") \
+        .eq("id", id_transacao).eq("user_id", _uid()).execute().data
+    if not linha:
+        return "", 204
+    linha = linha[0]
+
+    if linha.get("fatura_pagamento_id"):
+        return json_error("PROTECTED", "Pagamentos de fatura são protegidos: use estornar em vez de excluir.", 409)
+
+    if linha.get("transfer_pair_id"):
+        supabase.table("despesas").delete().eq("id", id_transacao).eq("user_id", _uid()).execute()
+        supabase.table("despesas").delete().eq("id", linha["transfer_pair_id"]).eq("user_id", _uid()).execute()
+        return "", 204
+
+    id_fatura = linha.get("fatura_id")
+    if id_fatura:
+        supabase.table("despesas").delete().eq("id", id_transacao).eq("user_id", _uid()).execute()
+        restantes = supabase.table("despesas").select("id") \
+            .eq("fatura_id", id_fatura).eq("user_id", _uid()).execute().data
+        if not restantes:
             supabase.table("faturas").update({
                 "status": "pendente", "pago_com": None, "valor_pago": None, "pago_em": None,
             }).eq("id", id_fatura).eq("user_id", _uid()).execute()
-            flash("Pagamento desfeito: a fatura voltou a ficar em aberto.")
-        return _voltar()
+        return "", 204
 
-    grupo = linha[0].get("grupo_parcela")
-
+    grupo = linha.get("grupo_parcela")
     if grupo:
-        apagadas = supabase.table("despesas").delete() \
-            .eq("grupo_parcela", grupo).eq("user_id", _uid()).execute()
-        quantas = len(apagadas.data or [])
-        flash(f"Compra parcelada excluída ({quantas} parcela{'s' if quantas != 1 else ''}).")
-        return _voltar()
-
-    supabase.table("despesas").delete() \
-        .eq("id", id_transacao).eq("user_id", _uid()).execute()
-    flash("Transação excluída.")
-    return _voltar()
-
-
-def _somar_meses(data_base, n):
-    """Mesma data n meses a frente, encurtando o dia quando o mes destino
-    for mais curto (31/01 + 1 mes -> 28 ou 29/02)."""
-    if isinstance(data_base, str):
-        try:
-            ano, mes, dia = (int(p) for p in data_base[:10].split("-"))
-            data_base = date(ano, mes, dia)
-        except (ValueError, TypeError):
-            # Data invalida no banco nao pode derrubar a tela inteira.
-            data_base = date.today()
-    mes = data_base.month - 1 + n
-    ano = data_base.year + mes // 12
-    mes = mes % 12 + 1
-    bissexto = ano % 4 == 0 and (ano % 100 != 0 or ano % 400 == 0)
-    ultimo = [31, 29 if bissexto else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mes - 1]
-    return date(ano, mes, min(data_base.day, ultimo))
-
-
-def _voltar():
-    """Volta pra tela de onde o formulario foi enviado, preservando os filtros."""
-    destino = request.form.get("origem") or request.referrer or url_for("index")
-    return redirect(destino)
+        supabase.table("despesas").delete().eq("grupo_parcela", grupo).eq("user_id", _uid()).execute()
+    else:
+        supabase.table("despesas").delete().eq("id", id_transacao).eq("user_id", _uid()).execute()
+    return "", 204
 
 
 # ------------------------------------------------------------------
 # Contas e cartoes
 # ------------------------------------------------------------------
 
-@app.route("/contas")
+@app.route("/api/v1/accounts", methods=["POST"])
 @com_supabase
-def contas(supabase):
-    lista = _contas(supabase)
-    transacoes = _transacoes(supabase)
-    mes = _mes_selecionado()
-    registros = _faturas(supabase)
-    faturas = _montar_faturas(transacoes, lista, registros, mes)
-
-    # Cartao nao guarda saldo: o que ele "tem" e a fatura em aberto.
-    por_conta = {f["conta"]["id"]: f for f in faturas}
-    saldos = _saldos(lista, transacoes, registros, mes)
-    carteiras = [
-        {**c, "saldo_atual": saldos.get(c["id"], 0)}
-        for c in lista if c.get("tipo") != "Cartão de crédito"
-    ]
-
-    contexto = _contexto_base(supabase, "accounts", transacoes)
-    contexto.update({
-        "contas": lista, "faturas": por_conta, "carteiras": carteiras,
-        "saldos": saldos,
-        "total": sum(saldos.values()),
-        "fatura_total": sum(f["valor"] for f in faturas if f["status"] == "pendente"),
-    })
-    return render_template("contas.html", **contexto)
-
-
-@app.route("/conta/salvar", methods=["POST"])
-@com_supabase
-def salvar_conta(supabase):
-    id_conta = request.form.get("id")
-    nome = (request.form.get("nome") or "").strip()
+def api_criar_conta(supabase):
+    corpo = _corpo()
+    nome = (corpo.get("name") or "").strip()
     if not nome:
-        flash("Informe o nome da conta.")
-        return _voltar()
+        return json_error("VALIDATION", "Informe o nome da conta.", 422)
+    tipo = corpo.get("type") or "Conta corrente"
+    if tipo not in TIPOS_CONTA:
+        return json_error("VALIDATION", "Tipo de conta inválido.", 422)
 
-    tipo = request.form.get("tipo") or "Conta corrente"
-
-    # So conta contra o limite quando esta CRIANDO (editar uma conta que
-    # ja existe nunca deveria travar por causa de um limite de plano).
-    if not id_conta and not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
         existentes = _contas(supabase)
         cartoes = sum(1 for c in existentes if c.get("tipo") == "Cartão de crédito")
         outras = len(existentes) - cartoes
@@ -1509,573 +1150,801 @@ def salvar_conta(supabase):
             or (tipo != "Cartão de crédito" and outras >= LIMITE_GRATIS_CONTAS)
         )
         if estourou:
-            return _bloquear_por_plano(
-                f"O plano Grátis permite {LIMITE_GRATIS_CONTAS} conta e {LIMITE_GRATIS_CARTOES} "
-                "cartão. Assine o Synch IA para ter contas e cartões ilimitados."
+            return _erro_plano(
+                f"O plano Grátis permite {LIMITE_GRATIS_CONTAS} conta e {LIMITE_GRATIS_CARTOES} cartão. "
+                "Assine o Synch IA para ter contas e cartões ilimitados."
             )
 
     campos = {
-        "nome": nome,
-        "tipo": tipo,
-        "detalhe": (request.form.get("detalhe") or "").strip() or "Atualizado agora",
-        "cor": request.form.get("cor") or "#22c55e",
+        "nome": nome, "tipo": tipo,
+        "detalhe": (corpo.get("detail") or "").strip() or "Criada agora",
+        "cor": _cor_valida(corpo.get("color"), "#22c55e"),
     }
     if tipo == "Cartão de crédito":
-        # Cartao nao tem saldo digitado -- a fatura vem dos lancamentos.
         campos["saldo"] = 0
-        campos["fechamento"] = max(1, min(28, int(_numero(request.form.get("fechamento"), 28))))
-        campos["vencimento"] = max(1, min(28, int(_numero(request.form.get("vencimento"), 10))))
+        campos["fechamento"] = max(1, min(28, int(corpo.get("closingDay") or 28)))
+        campos["vencimento"] = max(1, min(28, int(corpo.get("dueDay") or 10)))
+        campos["limite_credito"] = corpo.get("creditLimit")
+        campos["ultimos_digitos"] = corpo.get("lastFour")
     else:
-        campos["saldo"] = _numero(request.form.get("saldo"))
-    if id_conta:
-        # Renomear tem que arrastar as transacoes junto: elas guardam o NOME
-        # da conta, entao o vinculo quebra e a compra deixa de ser vista como
-        # do cartao -- passando a contar em "Gastos no mes" sem fatura paga.
-        antes = (
-            supabase.table("contas").select("nome")
-            .eq("id", id_conta).eq("user_id", _uid()).execute().data
-        )
-        nome_antigo = antes[0]["nome"] if antes else None
+        campos["saldo"] = float(corpo.get("balance") or 0)
 
-        supabase.table("contas").update(campos).eq("id", id_conta).eq("user_id", _uid()).execute()
-
-        movidas = 0
-        if nome_antigo and nome_antigo != nome:
-            alvo = supabase.table("despesas").update({"conta": nome}) \
-                .eq("conta", nome_antigo).eq("user_id", _uid()).execute()
-            movidas = len(alvo.data or [])
-            supabase.table("recorrentes").update({"conta": nome}) \
-                .eq("conta", nome_antigo).eq("user_id", _uid()).execute()
-
-        flash(
-            f"Conta atualizada. {movidas} transaç{'ões' if movidas != 1 else 'ão'} "
-            f"repassada{'s' if movidas != 1 else ''} para o novo nome."
-            if movidas else "Conta atualizada."
-        )
-    else:
-        supabase.table("contas").insert({**campos, "user_id": _uid()}).execute()
-        flash("Conta criada.")
-    return _voltar()
+    criada = supabase.table("contas").insert({**campos, "user_id": _uid()}).execute().data[0]
+    saldo = 0.0 if tipo == "Cartão de crédito" else criada["saldo"]
+    return json_ok(_serializar_conta(criada, saldo), 201)
 
 
-@app.route("/conta/deletar", methods=["POST"])
+@app.route("/api/v1/accounts/<int:id_conta>", methods=["PUT"])
 @com_supabase
-def deletar_conta(supabase):
-    supabase.table("contas").delete().eq("id", request.form["id"]).eq("user_id", _uid()).execute()
-    flash("Conta excluída.")
-    return _voltar()
+def api_editar_conta(supabase, id_conta):
+    corpo = _corpo()
+    nome = (corpo.get("name") or "").strip()
+    if not nome:
+        return json_error("VALIDATION", "Informe o nome da conta.", 422)
+
+    antes = supabase.table("contas").select("*").eq("id", id_conta).eq("user_id", _uid()).execute().data
+    if not antes:
+        return json_error("NOT_FOUND", "Conta não encontrada.", 404)
+    atual = antes[0]
+    tipo = atual.get("tipo") or "Conta corrente"  # tipo nao muda depois de criada
+
+    campos = {
+        "nome": nome,
+        "detalhe": (corpo.get("detail") or "").strip() or atual.get("detalhe") or "",
+        "cor": _cor_valida(corpo.get("color"), atual.get("cor") or "#22c55e"),
+    }
+    if tipo == "Cartão de crédito":
+        if "closingDay" in corpo:
+            campos["fechamento"] = max(1, min(28, int(corpo.get("closingDay") or 28)))
+        if "dueDay" in corpo:
+            campos["vencimento"] = max(1, min(28, int(corpo.get("dueDay") or 10)))
+        if "creditLimit" in corpo:
+            campos["limite_credito"] = corpo.get("creditLimit")
+        if "lastFour" in corpo:
+            campos["ultimos_digitos"] = corpo.get("lastFour")
+    elif "balance" in corpo:
+        # O campo do formulario e o saldo ATUAL que a pessoa quer ver, mas o
+        # que se grava e o saldo inicial: desconta o que as transacoes ja
+        # movimentaram, senao cada edicao somaria tudo de novo por cima.
+        movimentado = _saldo_conta({**atual, "saldo": 0}, _transacoes(supabase))
+        campos["saldo"] = round(float(corpo.get("balance") or 0) - movimentado, 2)
+
+    supabase.table("contas").update(campos).eq("id", id_conta).eq("user_id", _uid()).execute()
+
+    # Renomear tem que arrastar as transacoes junto: elas guardam o NOME
+    # da conta, entao o vinculo quebra sem isso.
+    if atual["nome"] != nome:
+        supabase.table("despesas").update({"conta": nome}).eq("conta", atual["nome"]).eq("user_id", _uid()).execute()
+        supabase.table("recorrentes").update({"conta": nome}).eq("conta", atual["nome"]).eq("user_id", _uid()).execute()
+
+    transacoes = _transacoes(supabase)
+    nova = {**atual, **campos}
+    saldo = _cartao_usado(supabase, transacoes, nova) if tipo == "Cartão de crédito" else _saldo_conta(nova, transacoes)
+    return json_ok(_serializar_conta(nova, saldo))
 
 
-# ------------------------------------------------------------------
-# Pagamento da fatura
-#
-# Pagar so mexe no saldo da conta de origem e marca a fatura. Nao cria
-# transacao: os itens do cartao ja foram lancados um a um, entao gerar
-# uma despesa "pagamento da fatura" contaria o mesmo gasto duas vezes.
-# ------------------------------------------------------------------
-
-@app.route("/fatura/pagar", methods=["POST"])
+@app.route("/api/v1/accounts/<int:id_conta>", methods=["DELETE"])
 @com_supabase
-def pagar_fatura(supabase):
-    id_cartao = int(request.form["conta_id"])
-    mes = request.form["mes"]
-    origem = request.form.get("pago_com")
-    valor = _numero(request.form.get("valor"))
-
-    if not origem:
-        flash("Escolha de qual conta o pagamento sai.")
-        return _voltar()
-    if valor <= 0:
-        flash("Esta fatura não tem valor a pagar.")
-        return _voltar()
-
-    hoje = date.today().isoformat()
-
-    # Nao acumula nada aqui: quem soma os pagamentos e a lista de transacoes
-    # de quitacao. Guardar o total tambem no registro criaria duas versoes da
-    # mesma verdade, que e o que gerava fatura "paga" sem lancamento nenhum.
-    registro = supabase.table("faturas").upsert({
-        "user_id": _uid(), "conta_id": id_cartao, "mes": mes,
-        "status": "pago", "pago_com": int(origem), "pago_em": hoje,
-    }, on_conflict="user_id,conta_id,mes").execute().data
-
-    # O pagamento vira transacao: e ela que desconta o saldo da conta de
-    # origem e da o registro visivel em Transacoes. Nao conta como gasto
-    # novo -- as compras do cartao ja passam a contar com a fatura paga.
-    nomes = {c["id"]: c["nome"] for c in _contas(supabase)}
-    id_fatura = registro[0]["id"] if registro else None
-    if id_fatura:
-        supabase.table("despesas").insert({
-            "user_id": _uid(),
-            "nome_despesa": f"Fatura {nomes.get(id_cartao, 'do cartão')}",
-            "descricao": f"Fatura de {MESES_PT[int(mes[5:7])].lower()}",
-            "categoria": "Outros", "tipo": "despesa",
-            "conta": nomes.get(int(origem)), "status": "pago",
-            "valor": valor, "data": hoje,
-            "recorrente": False, "fatura_id": id_fatura,
-        }).execute()
-
-    flash(f"{brl(valor)} pagos na fatura.")
-    return _voltar()
-
-
-@app.route("/fatura/reabrir", methods=["POST"])
-@com_supabase
-def reabrir_fatura(supabase):
-    id_cartao, mes = request.form["conta_id"], request.form["mes"]
-
-    # A transacao de quitacao sai junto: sem ela o saldo ficaria descontado
-    # de uma fatura que voltou a estar em aberto.
-    registro = (
-        supabase.table("faturas").select("id")
-        .eq("user_id", _uid()).eq("conta_id", id_cartao).eq("mes", mes).execute().data
-    )
-    if registro:
-        supabase.table("despesas").delete() \
-            .eq("fatura_id", registro[0]["id"]).eq("user_id", _uid()).execute()
-
-    supabase.table("faturas").update({
-        "status": "pendente", "pago_com": None, "valor_pago": None, "pago_em": None,
-    }).eq("user_id", _uid()).eq("conta_id", id_cartao).eq("mes", mes).execute()
-
-    flash("Fatura reaberta.")
-    return _voltar()
+def api_deletar_conta(supabase, id_conta):
+    try:
+        supabase.table("contas").delete().eq("id", id_conta).eq("user_id", _uid()).execute()
+    except Exception:
+        return json_error("CONFLICT", "Esta conta tem histórico de pagamentos de fatura e não pode ser excluída.", 409)
+    return "", 204
 
 
 # ------------------------------------------------------------------
 # Orcamentos
 # ------------------------------------------------------------------
 
-@app.route("/orcamentos")
+@app.route("/api/v1/budgets", methods=["PUT"])
 @com_supabase
-def orcamentos(supabase):
-    todas = _transacoes(supabase)
-    do_mes = _do_mes(todas, _mes_selecionado())
-    limites = _orcamentos(supabase)
+def api_salvar_orcamentos(supabase):
+    corpo = _corpo()
+    if not isinstance(corpo, dict):
+        return json_error("VALIDATION", "Envie um mapa de categoria para limite.", 422)
 
-    # Mesmo criterio da visao geral: no cartao so conta o que ja foi quitado.
-    efetivado = _efetivados(_contas(supabase), _faturas(supabase), todas)
+    # Definir o limite de uma categoria que o usuario ja tem (as padrao ou as que ele
+    # criou) vale em qualquer plano; o gate so pega nome que nao e categoria nenhuma.
+    existentes = set(_orcamentos(supabase)) | set(_nomes_categorias(supabase))
+    if [c for c in corpo if c not in existentes] and not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return _erro_plano("Criar uma categoria de orçamento nova é um recurso do plano Synch IA. Assine para ter orçamentos ilimitados.")
 
     linhas = []
-    for nome, limite in sorted(limites.items()):
-        gasto = sum(
-            efetivado.get(t["id"], 0.0) for t in do_mes
-            if t.get("categoria") == nome
-        )
-        pct = min(100, (gasto / limite * 100)) if limite else 0
-        linhas.append({
-            "nome": nome, "limite": limite, "gasto": gasto, "pct": pct,
-            "disponivel": max(0, limite - gasto), "cor": _cor(nome),
-        })
+    for categoria, limite in corpo.items():
+        categoria = (categoria or "").strip()
+        if not categoria or categoria.lower() == "receita":
+            continue
+        try:
+            limite = float(limite)
+        except (TypeError, ValueError):
+            continue
+        if limite <= 0:
+            continue
+        linhas.append({"user_id": _uid(), "categoria": categoria, "limite": limite})
 
-    contexto = _contexto_base(supabase, "budgets", todas)
-    contexto["orcamentos"] = linhas
-    return render_template("orcamentos.html", **contexto)
+    if linhas:
+        supabase.table("orcamentos").upsert(linhas, on_conflict="user_id,categoria").execute()
+    return json_ok(_orcamentos(supabase))
 
 
-@app.route("/orcamento/salvar", methods=["POST"])
-@com_supabase
-def salvar_orcamento(supabase):
-    categoria = (request.form.get("categoria") or "").strip()
-    limite = _numero(request.form.get("limite"))
+# ------------------------------------------------------------------
+# Categorias
+# ------------------------------------------------------------------
 
-    if not categoria or limite <= 0:
-        flash("Informe um nome de categoria e um limite válido.")
-        return _voltar()
-    # "Receita" e reservado pra entradas -- nao e uma categoria de gasto,
-    # entao nao pode virar um orcamento.
-    if categoria.lower() == "receita":
-        flash("Receita não é uma categoria de despesa; escolha outro nome.")
-        return _voltar()
-
-    # A mesma categoria existente (mesmo nome, ignorando maiusculas) tem
-    # que so atualizar o limite -- sem isso "moradia" e "Moradia" viravam
-    # duas linhas diferentes pro upsert, que compara o texto exato.
-    existente = next(
-        (nome for nome in _orcamentos(supabase) if nome.lower() == categoria.lower()),
-        None,
+def _erro_categorias_indisponiveis():
+    return json_error(
+        "MIGRATION_REQUIRED",
+        "Falta rodar a atualização do banco (seção 11 do supabase_schema.sql) para criar e excluir categorias.",
+        503,
     )
-    categoria = existente or categoria
 
-    if not existente and not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return _bloquear_por_plano(
-            "Criar uma categoria de orçamento nova é um recurso do plano Synch IA. "
-            "Assine para ter orçamentos ilimitados."
-        )
 
-    supabase.table("orcamentos").upsert(
-        {"user_id": _uid(), "categoria": categoria, "limite": limite},
-        on_conflict="user_id,categoria",
-    ).execute()
-    flash("Categoria criada." if not existente else "Orçamento atualizado.")
-    return _voltar()
+@app.route("/api/v1/categories", methods=["POST"])
+@com_supabase
+def api_criar_categoria(supabase):
+    nome = " ".join(str(_corpo().get("name") or "").split())
+    if not nome:
+        return json_error("VALIDATION", "Informe o nome da categoria.", 422)
+    if len(nome) > 40:
+        return json_error("VALIDATION", "O nome da categoria pode ter no máximo 40 caracteres.", 422)
+
+    try:
+        existentes = _categorias(supabase)
+    except Exception:
+        return _erro_categorias_indisponiveis()
+    if _chave_categoria(nome) in {_chave_categoria(c) for c in existentes}:
+        return json_error("CONFLICT", "Já existe uma categoria com esse nome.", 409)
+
+    supabase.table("categorias").insert({"user_id": _uid(), "nome": nome}).execute()
+    return json_ok({"name": nome}, 201)
+
+
+@app.route("/api/v1/categories", methods=["PUT"])
+@com_supabase
+def api_renomear_categoria(supabase):
+    corpo = _corpo()
+    antigo = " ".join(str(corpo.get("name") or "").split())
+    novo = " ".join(str(corpo.get("newName") or "").split())
+    if not antigo or not novo:
+        return json_error("VALIDATION", "Informe a categoria e o novo nome.", 422)
+    if len(novo) > 40:
+        return json_error("VALIDATION", "O nome da categoria pode ter no máximo 40 caracteres.", 422)
+    if antigo in CATEGORIAS_SISTEMA:
+        return json_error("PROTECTED", f"“{antigo}” é uma categoria do sistema e não pode ser renomeada.", 409)
+
+    try:
+        existentes = _categorias(supabase)
+    except Exception:
+        return _erro_categorias_indisponiveis()
+    if antigo not in existentes:
+        return json_error("NOT_FOUND", "Categoria não encontrada.", 404)
+    if novo == antigo:
+        return json_ok({"name": novo})
+
+    # Nao pode virar o nome de outra categoria (nem de uma do sistema). Mudar so a
+    # maiuscula ou o acento da propria categoria ("viagem" -> "Viagem") pode.
+    chave = _chave_categoria(novo)
+    ocupados = {_chave_categoria(c) for c in existentes if c != antigo}
+    ocupados |= {_chave_categoria(c) for c in CATEGORIAS_SISTEMA}
+    if chave in ocupados:
+        return json_error("CONFLICT", "Já existe uma categoria com esse nome.", 409)
+
+    # Tudo que usa a categoria acompanha o novo nome. A propria categoria e a ultima a
+    # mudar, entao se algo falhar no meio basta repetir.
+    uid = _uid()
+    supabase.table("despesas").update({"categoria": novo}).eq("categoria", antigo).eq("user_id", uid).execute()
+    supabase.table("recorrentes").update({"categoria": novo}).eq("categoria", antigo).eq("user_id", uid).execute()
+    if supabase.table("orcamentos").select("id").eq("categoria", antigo).eq("user_id", uid).execute().data:
+        # Um orcamento solto com o nome novo (sem categoria) cede lugar ao da categoria renomeada.
+        supabase.table("orcamentos").delete().eq("categoria", novo).eq("user_id", uid).execute()
+        supabase.table("orcamentos").update({"categoria": novo}).eq("categoria", antigo).eq("user_id", uid).execute()
+    supabase.table("categorias").update({"nome": novo}).eq("nome", antigo).eq("user_id", uid).execute()
+    return json_ok({"name": novo})
+
+
+@app.route("/api/v1/categories", methods=["DELETE"])
+@com_supabase
+def api_deletar_categoria(supabase):
+    nome = " ".join((request.args.get("name") or "").split())
+    if not nome:
+        return json_error("VALIDATION", "Informe a categoria.", 422)
+    if nome in CATEGORIAS_SISTEMA:
+        return json_error("PROTECTED", f"“{nome}” é uma categoria do sistema e não pode ser excluída.", 409)
+
+    try:
+        existentes = _categorias(supabase)
+    except Exception:
+        return _erro_categorias_indisponiveis()
+    if nome not in existentes:
+        return "", 204
+
+    # O que usava a categoria nao pode ficar apontando pra uma que nao existe
+    # mais: movimentacoes e recorrencias vao pra "Outros" e o orcamento dela
+    # (que so fazia sentido pra ela) sai. A categoria em si e a ultima a sair,
+    # entao se algo falhar no meio basta repetir.
+    supabase.table("despesas").update({"categoria": "Outros"}).eq("categoria", nome).eq("user_id", _uid()).execute()
+    supabase.table("recorrentes").update({"categoria": "Outros"}).eq("categoria", nome).eq("user_id", _uid()).execute()
+    supabase.table("orcamentos").delete().eq("categoria", nome).eq("user_id", _uid()).execute()
+    supabase.table("categorias").delete().eq("nome", nome).eq("user_id", _uid()).execute()
+    return "", 204
 
 
 # ------------------------------------------------------------------
 # Recorrentes
 # ------------------------------------------------------------------
 
-@app.route("/recorrentes")
+@app.route("/api/v1/recurring", methods=["POST"])
 @com_supabase
-def recorrentes(supabase):
-    lista = _recorrentes(supabase)
-    contas_lista = _contas(supabase)
-    tipos = {_chave_conta(c["nome"]): c.get("tipo") for c in contas_lista}
+def api_criar_recorrente(supabase):
+    corpo = _corpo()
+    nome = (corpo.get("name") or "").strip()
+    valor = corpo.get("amount")
+    if not nome or not isinstance(valor, (int, float)) or valor <= 0:
+        return json_error("VALIDATION", "Preencha os dados da recorrência.", 422)
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return _erro_plano("Criar uma recorrência é um recurso do plano Synch IA. Assine para automatizar lançamentos fixos.")
 
-    # Quais ja foram lancadas no mes corrente: sem isso, "proximo
-    # lancamento" segue prometendo algo que ja aconteceu.
-    mes_corrente = _mes_atual()
-    lancadas = {
-        d["recorrente_id"] for d in _transacoes(supabase)
-        if d.get("recorrente_id") and (d.get("data") or "")[:7] == mes_corrente
-    }
-
-    for r in lista:
-        r["lancada"] = r["id"] in lancadas
-        r["proximo"] = _proximo_lancamento(int(r.get("dia") or 1))
-        r["cor"] = _cor(r.get("categoria"))
-        r["receita"] = r.get("tipo") == "receita"
-        r["no_cartao"] = tipos.get(_chave_conta(r.get("conta"))) == "Cartão de crédito"
-        # Conta apagada depois de criada a recorrencia: avisa em vez de
-        # mostrar um nome que nao existe mais.
-        r["conta_sumiu"] = bool(r.get("conta")) and _chave_conta(r["conta"]) not in tipos
-
-    contexto = _contexto_base(supabase, "recurring")
-    contexto["recorrentes"] = lista
-    # Separadas por tipo pro select agrupar: cobranca no cartao cai na
-    # fatura, cobranca em conta sai do saldo -- nao e a mesma coisa.
-    contexto["carteiras"] = [c for c in contas_lista if c.get("tipo") != "Cartão de crédito"]
-    contexto["cartoes"] = [c for c in contas_lista if c.get("tipo") == "Cartão de crédito"]
-    return render_template("recorrentes.html", **contexto)
-
-
-def _proximo_lancamento(dia):
-    """Proxima data em que a recorrencia cai: ainda neste mes se o dia nao
-    passou, senao no mes seguinte."""
-    hoje = date.today()
-    primeiro = date(hoje.year, hoje.month, 1)
-    try:
-        candidato = primeiro.replace(day=dia)
-    except ValueError:
-        # Dia que nao existe neste mes (ex.: 31 em fevereiro): usa o ultimo.
-        candidato = _somar_meses(primeiro, 1) - timedelta(days=1)
-    if candidato < hoje:
-        candidato = _somar_meses(candidato, 1)
-    return f"{candidato.day:02d} {MESES_CURTO[candidato.month]}"
-
-
-@app.route("/recorrente/salvar", methods=["POST"])
-@com_supabase
-def salvar_recorrente(supabase):
-    id_recorrente = request.form.get("id")
-    nome = (request.form.get("nome") or "").strip()
-    valor = _numero(request.form.get("valor"))
-    if not nome or valor <= 0:
-        flash("Preencha os dados da recorrência.")
-        return _voltar()
-
-    if not id_recorrente and not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return _bloquear_por_plano(
-            "Criar uma recorrência é um recurso do plano Synch IA. Assine para automatizar lançamentos fixos."
-        )
-
-    tipo = "receita" if request.form.get("tipo") == "receita" else "despesa"
+    tipo = "receita" if corpo.get("type") == "income" else "despesa"
     campos = {
         "nome": nome,
-        "categoria": "Receita" if tipo == "receita" else (request.form.get("categoria") or "Assinaturas"),
-        "tipo": tipo,
-        "valor": valor,
-        "conta": request.form.get("conta") or None,
-        "dia": max(1, min(28, int(_numero(request.form.get("dia"), 1)))),
+        "categoria": "Receita" if tipo == "receita" else (corpo.get("category") or "Assinaturas"),
+        "tipo": tipo, "valor": float(valor),
+        "conta": corpo.get("account") or None,
+        "dia": max(1, min(28, int(corpo.get("day") or 1))),
+        "ativo": bool(corpo.get("active", True)),
     }
-
-    if id_recorrente:
-        # Edita sem mexer em "ativo": pausar/retomar e coisa do switch,
-        # nao do formulario.
-        supabase.table("recorrentes").update(campos) \
-            .eq("id", id_recorrente).eq("user_id", _uid()).execute()
-        flash("Recorrência atualizada.")
-    else:
-        supabase.table("recorrentes").insert({
-            **campos, "user_id": _uid(), "ativo": True,
-        }).execute()
-        flash("Recorrência criada.")
-    return _voltar()
+    criada = supabase.table("recorrentes").insert({**campos, "user_id": _uid()}).execute().data[0]
+    return json_ok(_serializar_recorrente(criada), 201)
 
 
-@app.route("/recorrente/alternar", methods=["POST"])
+@app.route("/api/v1/recurring/<int:id_recorrente>", methods=["PUT"])
 @com_supabase
-def alternar_recorrente(supabase):
-    supabase.table("recorrentes").update({"ativo": request.form.get("ativo") == "1"}) \
-        .eq("id", request.form["id"]).eq("user_id", _uid()).execute()
-    return _voltar()
+def api_editar_recorrente(supabase, id_recorrente):
+    corpo = _corpo()
+    nome = (corpo.get("name") or "").strip()
+    valor = corpo.get("amount")
+    if not nome or not isinstance(valor, (int, float)) or valor <= 0:
+        return json_error("VALIDATION", "Preencha os dados da recorrência.", 422)
+
+    # So muda o que veio no corpo: pausar ou renomear uma recorrencia nao pode
+    # zerar o dia, a conta nem o tipo (receita/despesa) que ela ja tinha.
+    campos = {"nome": nome, "valor": float(valor)}
+    if "type" in corpo:
+        campos["tipo"] = "receita" if corpo.get("type") == "income" else "despesa"
+    if "category" in corpo:
+        campos["categoria"] = "Receita" if campos.get("tipo") == "receita" else (corpo.get("category") or "Assinaturas")
+    if "account" in corpo:
+        campos["conta"] = corpo.get("account") or None
+    if "day" in corpo:
+        campos["dia"] = max(1, min(28, int(corpo.get("day") or 1)))
+    if "active" in corpo:
+        campos["ativo"] = bool(corpo.get("active"))
+
+    atualizada = supabase.table("recorrentes").update(campos) \
+        .eq("id", id_recorrente).eq("user_id", _uid()).execute().data
+    if not atualizada:
+        return json_error("NOT_FOUND", "Recorrência não encontrada.", 404)
+    return json_ok(_serializar_recorrente(atualizada[0]))
 
 
-@app.route("/recorrente/deletar", methods=["POST"])
+@app.route("/api/v1/recurring/<int:id_recorrente>", methods=["DELETE"])
 @com_supabase
-def deletar_recorrente(supabase):
-    supabase.table("recorrentes").delete() \
-        .eq("id", request.form["id"]).eq("user_id", _uid()).execute()
-    flash("Recorrência removida.")
-    return _voltar()
+def api_deletar_recorrente(supabase, id_recorrente):
+    supabase.table("recorrentes").delete().eq("id", id_recorrente).eq("user_id", _uid()).execute()
+    return "", 204
 
 
 # ------------------------------------------------------------------
 # Metas
 # ------------------------------------------------------------------
 
-@app.route("/metas")
+@app.route("/api/v1/goals", methods=["POST"])
 @com_supabase
-def metas(supabase):
-    lista = _metas(supabase)
-    for m in lista:
-        guardado, alvo = float(m.get("guardado") or 0), float(m.get("alvo") or 0)
-        m["pct"] = min(100, (guardado / alvo * 100)) if alvo else 0
-        m["falta"] = max(0, alvo - guardado)
-
-    contexto = _contexto_base(supabase, "goals")
-    contexto["metas"] = lista
-    return render_template("metas.html", **contexto)
-
-
-@app.route("/meta/salvar", methods=["POST"])
-@com_supabase
-def salvar_meta(supabase):
-    nome = (request.form.get("nome") or "").strip()
-    alvo = _numero(request.form.get("alvo"))
-    if not nome or alvo <= 0:
-        flash("Preencha os dados da meta.")
-        return _voltar()
-
+def api_criar_meta(supabase):
+    corpo = _corpo()
+    nome = (corpo.get("name") or "").strip()
+    alvo = corpo.get("target")
+    if not nome or not isinstance(alvo, (int, float)) or alvo <= 0:
+        return json_error("VALIDATION", "Preencha os dados da meta.", 422)
     if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
         if len(_metas(supabase)) >= LIMITE_GRATIS_METAS:
-            return _bloquear_por_plano(
-                f"O plano Grátis permite {LIMITE_GRATIS_METAS} meta financeira. "
-                "Assine o Synch IA para ter metas ilimitadas."
-            )
+            return _erro_plano(f"O plano Grátis permite {LIMITE_GRATIS_METAS} meta financeira. Assine o Synch IA para ter metas ilimitadas.")
 
-    supabase.table("metas").insert({
+    criada = supabase.table("metas").insert({
         "user_id": _uid(), "nome": nome,
-        "guardado": _numero(request.form.get("guardado")),
-        "alvo": alvo,
-        "prazo": (request.form.get("prazo") or "").strip() or "Sem prazo",
-        "cor": request.form.get("cor") or "#22c55e",
-    }).execute()
-    flash("Meta criada.")
-    return _voltar()
+        "guardado": min(float(corpo.get("saved") or 0), float(alvo)),
+        "alvo": float(alvo),
+        "prazo": (corpo.get("deadline") or "").strip() or "Sem prazo",
+        "cor": corpo.get("color") or "#22c55e",
+    }).execute().data[0]
+    return json_ok(_serializar_meta(criada), 201)
 
 
-@app.route("/meta/aportar", methods=["POST"])
+@app.route("/api/v1/goals/<int:id_meta>", methods=["PUT"])
 @com_supabase
-def aportar_meta(supabase):
-    id_meta = request.form["id"]
-    aporte = _numero(request.form.get("valor"), 100)
-
-    atual = supabase.table("metas").select("guardado, alvo") \
-        .eq("id", id_meta).eq("user_id", _uid()).execute().data
+def api_editar_meta(supabase, id_meta):
+    corpo = _corpo()
+    atual = supabase.table("metas").select("*").eq("id", id_meta).eq("user_id", _uid()).execute().data
     if not atual:
-        return _voltar()
+        return json_error("NOT_FOUND", "Meta não encontrada.", 404)
+    atual = atual[0]
 
-    guardado = float(atual[0].get("guardado") or 0)
-    alvo = float(atual[0].get("alvo") or 0)
-    # Nao deixa passar do alvo: um aporte maior que o que falta so completa.
-    novo = min(alvo, guardado + aporte) if alvo else guardado + aporte
+    alvo = float(corpo.get("target", atual["alvo"]) or 0)
+    guardado = float(corpo.get("saved", atual["guardado"]) or 0)
+    guardado = min(guardado, alvo) if alvo else guardado  # nunca passa do alvo
 
-    supabase.table("metas").update({"guardado": novo}) \
-        .eq("id", id_meta).eq("user_id", _uid()).execute()
-    flash("Aporte registrado.")
-    return _voltar()
+    campos = {
+        "nome": (corpo.get("name") or atual["nome"]).strip(),
+        "guardado": guardado, "alvo": alvo,
+        "prazo": corpo.get("deadline", atual.get("prazo")),
+        "cor": corpo.get("color", atual.get("cor")),
+    }
+    atualizada = supabase.table("metas").update(campos).eq("id", id_meta).eq("user_id", _uid()).execute().data[0]
+    return json_ok(_serializar_meta(atualizada))
 
 
-@app.route("/meta/deletar", methods=["POST"])
+@app.route("/api/v1/goals/<int:id_meta>", methods=["DELETE"])
 @com_supabase
-def deletar_meta(supabase):
-    supabase.table("metas").delete().eq("id", request.form["id"]).eq("user_id", _uid()).execute()
-    flash("Meta removida.")
-    return _voltar()
+def api_deletar_meta(supabase, id_meta):
+    supabase.table("metas").delete().eq("id", id_meta).eq("user_id", _uid()).execute()
+    return "", 204
 
 
 # ------------------------------------------------------------------
-# Relatorios
+# Preferencias
 # ------------------------------------------------------------------
 
-@app.route("/relatorios")
+@app.route("/api/v1/preferences", methods=["PUT"])
 @com_supabase
-def relatorios(supabase):
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return redirect(url_for(
-            "planos", motivo="Os relatórios completos são um recurso do plano Synch IA."
-        ))
-
-    todas = _transacoes(supabase)
-
-    # Seis meses terminando no mes selecionado.
-    mes = _mes_selecionado()
-    referencia = date(int(mes[:4]), int(mes[5:7]), 1)
-    janela = [_somar_meses(referencia, -i).strftime("%Y-%m") for i in range(5, -1, -1)]
-
-    dados, receitas_total, despesas_total = [], 0.0, 0.0
-    for m in janela:
-        do_mes = _do_mes(todas, m)
-        receitas = sum(_valor(t) for t in do_mes if not _e_despesa(t))
-        despesas = sum(_valor(t) for t in do_mes if _e_despesa(t))
-        receitas_total += receitas
-        despesas_total += despesas
-        dados.append({
-            "mes": MESES_CURTO[int(m[5:7])].capitalize(),
-            "receitas": receitas, "despesas": despesas,
-        })
-
-    economia = receitas_total - despesas_total
-    contexto = _contexto_base(supabase, "reports", todas)
-    contexto.update({
-        "barras": _grafico_barras(dados),
-        "receitas_total": receitas_total,
-        "despesas_total": despesas_total,
-        "economia": economia,
-        "pct_economia": (economia / receitas_total * 100) if receitas_total else 0,
-        # Sparklines dos KPIs, pra dar o formato da serie sem ler os numeros.
-        "spark_receitas": _minigrafico([d["receitas"] for d in dados]),
-        "spark_despesas": _minigrafico([d["despesas"] for d in dados]),
-    })
-    return render_template("relatorios.html", **contexto)
+def api_salvar_preferencias(supabase):
+    corpo = _corpo()
+    _preferencias(supabase)
+    supabase.table("preferencias").update({
+        "nome": (corpo.get("name") or "").strip() or "Usuário",
+        "notificacoes": bool(corpo.get("notifications", True)),
+        "resumo_semanal": bool(corpo.get("weekly", True)),
+    }).eq("user_id", _uid()).execute()
+    return json_ok(_serializar_preferencias(_preferencias(supabase), session.get("email")))
 
 
 # ------------------------------------------------------------------
-# Assistente
-#
-# Analise local por regras, sem chamar nenhum modelo externo: le as
-# transacoes do mes e responde sobre o que ja esta no banco.
+# Transferencias entre contas
 # ------------------------------------------------------------------
 
-@app.route("/assistente", methods=["GET", "POST"])
+@app.route("/api/v1/transfers", methods=["POST"])
 @com_supabase
-def assistente(supabase):
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return redirect(url_for(
-            "planos", motivo="O Assistente financeiro (texto e voz) é exclusivo do plano Synch IA."
-        ))
+def api_criar_transferencia(supabase):
+    corpo = _corpo()
+    contas = _contas(supabase)
+    por_id = {c["id"]: c for c in contas}
+    origem = por_id.get(corpo.get("fromAccountId"))
+    destino = por_id.get(corpo.get("toAccountId"))
+    valor = corpo.get("amount")
+    data_transf = corpo.get("date") or date.today().isoformat()
 
-    todas = _transacoes(supabase)
-    do_mes = _do_mes(todas, _mes_selecionado())
-    limites = _orcamentos(supabase)
+    if not origem or not destino or origem["id"] == destino["id"]:
+        return json_error("VALIDATION", "Escolha duas contas diferentes.", 422)
+    if not isinstance(valor, (int, float)) or valor <= 0:
+        return json_error("VALIDATION", "Informe um valor válido.", 422)
 
-    efetivado = _efetivados(_contas(supabase), _faturas(supabase), todas)
-    pagas = [t for t in do_mes if efetivado.get(t["id"], 0.0) > 0]
-    gasto = sum(efetivado.get(t["id"], 0.0) for t in do_mes)
-    orcamento_total = sum(limites.values())
+    descricao = (corpo.get("description") or "").strip() or f"Transferência para {destino['nome']}"
+    debito = {
+        "user_id": _uid(), "nome_despesa": descricao, "descricao": "",
+        "categoria": "Outros", "tipo": "despesa", "conta": origem["nome"],
+        "status": "pago", "valor": float(valor), "data": data_transf,
+        "recorrente": False, "kind": "transfer",
+    }
+    credito = {**debito, "tipo": "receita", "conta": destino["nome"]}
 
-    por_categoria = defaultdict(float)
-    for t in pagas:
-        por_categoria[t.get("categoria") or "Outros"] += efetivado.get(t["id"], 0.0)
-    maior = max(por_categoria.items(), key=lambda i: i[1], default=None)
+    criadas = supabase.table("despesas").insert([debito, credito]).execute().data
+    supabase.table("despesas").update({"transfer_pair_id": criadas[1]["id"]}).eq("id", criadas[0]["id"]).execute()
+    supabase.table("despesas").update({"transfer_pair_id": criadas[0]["id"]}).eq("id", criadas[1]["id"]).execute()
 
-    conversa = session.get("conversa", [])
-    if request.method == "POST":
-        pergunta = (request.form.get("pergunta") or "").strip()
-        if pergunta:
-            conversa = conversa[-8:] + [
-                {"quem": "usuario", "texto": pergunta},
-                {"quem": "assistente", "texto": _responder(
-                    pergunta, gasto, orcamento_total, maior, len(do_mes), _metas(supabase)
-                )},
-            ]
-            session["conversa"] = conversa
-        return redirect(url_for("assistente"))
-
-    contexto = _contexto_base(supabase, "assistant", todas)
-    contexto.update({
-        "conversa": conversa,
-        "gasto": gasto,
-        "orcamento_total": orcamento_total,
-        "dentro_do_orcamento": gasto <= orcamento_total,
-        "maior_categoria": maior,
-        "pct_maior": (maior[1] / gasto * 100) if maior and gasto else 0,
-        "pct_disponivel": (
-            (orcamento_total - gasto) / orcamento_total * 100
-        ) if orcamento_total else 0,
-    })
-    return render_template("assistente.html", **contexto)
+    contas_por_nome = {_chave_conta(c["nome"]): c for c in contas}
+    return json_ok({
+        "debit": _serializar_transacao({**criadas[0], "transfer_pair_id": criadas[1]["id"]}, contas_por_nome),
+        "credit": _serializar_transacao({**criadas[1], "transfer_pair_id": criadas[0]["id"]}, contas_por_nome),
+    }, 201)
 
 
-def _responder(pergunta, gasto, orcamento, maior, qtd, metas_usuario):
-    texto = pergunta.lower()
+# ------------------------------------------------------------------
+# Fatura: pagamento parcial/total, estorno e ajuste manual
+# ------------------------------------------------------------------
 
-    if "mais" in texto or "gast" in texto:
-        if not maior:
-            return "Ainda não há despesas suficientes neste mês para analisar."
-        pct = round(maior[1] / gasto * 100) if gasto else 0
-        return (
-            f"{maior[0]} é sua maior categoria, com {brl(maior[1])}, "
-            f"representando {pct}% das despesas do mês."
-        )
+def _validar_cartao(contas, id_cartao):
+    return next((c for c in contas if c["id"] == id_cartao and c.get("tipo") == "Cartão de crédito"), None)
 
-    if "econom" in texto or "poupar" in texto:
-        sobra = max(0, orcamento - gasto)
-        alvo = maior[0] if maior else "a categoria mais frequente"
-        return (
-            f"Seu orçamento ainda tem {brl(sobra)} disponível. "
-            f"Um corte de 10% em {alvo} já libera {brl((maior[1] * 0.1) if maior else 0)}."
-        )
 
-    if "meta" in texto:
-        if not metas_usuario:
-            return "Você ainda não cadastrou metas. Comece por uma reserva de emergência."
-        pendente = min(
-            metas_usuario,
-            key=lambda m: (float(m.get("guardado") or 0) / (float(m.get("alvo") or 1) or 1)),
-        )
-        falta = max(0, float(pendente.get("alvo") or 0) - float(pendente.get("guardado") or 0))
-        return (
-            f"Priorize \"{pendente['nome']}\": faltam {brl(falta)} para concluir. "
-            "Automatize um aporte logo depois da entrada da renda."
-        )
+@app.route("/api/v1/cards/<int:id_cartao>/invoices/<ciclo>/payments", methods=["GET"])
+@com_supabase
+def api_listar_pagamentos_fatura(supabase, id_cartao, ciclo):
+    nomes = {c["id"]: c["nome"] for c in _contas(supabase)}
+    linhas = supabase.table("fatura_pagamentos").select("*") \
+        .eq("user_id", _uid()).eq("conta_id", id_cartao).eq("ciclo", ciclo) \
+        .order("data").execute().data or []
+    return json_ok([_serializar_pagamento(p, nomes) for p in linhas])
 
-    if "pendente" in texto or "conta" in texto:
-        return "Confira a aba Transações filtrando por status Pendente para ver o que vence."
 
-    pct = round(gasto / orcamento * 100) if orcamento else 0
-    return (
-        f"Analisei {qtd} movimentações deste mês. "
-        f"Seu gasto atual utiliza {pct}% do orçamento planejado."
+@app.route("/api/v1/cards/<int:id_cartao>/invoices/<ciclo>/payments", methods=["POST"])
+@com_supabase
+def api_pagar_fatura(supabase, id_cartao, ciclo):
+    corpo = _corpo()
+    contas = _contas(supabase)
+    cartao = _validar_cartao(contas, id_cartao)
+    if not cartao:
+        return json_error("NOT_FOUND", "Cartão não encontrado.", 404)
+
+    origem = next((c for c in contas if c["id"] == corpo.get("sourceAccountId")), None)
+    valor = corpo.get("amount")
+    data_pagamento = corpo.get("date") or date.today().isoformat()
+    modo = "full" if corpo.get("mode") == "full" else "partial"
+    chave_idem = (corpo.get("idempotencyKey") or "").strip()
+
+    if not chave_idem:
+        return json_error("VALIDATION", "idempotencyKey é obrigatória.", 422)
+    if not origem or origem.get("tipo") == "Cartão de crédito":
+        return json_error("VALIDATION", "Escolha uma conta de origem válida.", 422)
+    if not isinstance(valor, (int, float)) or valor <= 0:
+        return json_error("VALIDATION", "Informe um valor válido.", 422)
+    if len(ciclo) != 7 or ciclo[4] != "-":
+        return json_error("VALIDATION", "Ciclo inválido.", 422)
+    try:
+        datetime.strptime(data_pagamento, "%Y-%m-%d")
+    except ValueError:
+        return json_error("VALIDATION", "Data inválida.", 422)
+
+    # Idempotencia: reenviar a mesma chave devolve o resultado anterior;
+    # a mesma chave com dados diferentes e um conflito.
+    existente = supabase.table("fatura_pagamentos").select("*") \
+        .eq("user_id", _uid()).eq("idempotency_key", chave_idem).execute().data
+    if existente:
+        registro = existente[0]
+        igual = (registro["conta_id"], registro["ciclo"], round(float(registro["valor"]), 2)) == \
+                (id_cartao, ciclo, round(float(valor), 2))
+        if not igual:
+            return json_error("IDEMPOTENCY_CONFLICT", "Essa chave já foi usada com dados diferentes.", 409)
+        nomes = {c["id"]: c["nome"] for c in contas}
+        return json_ok(_serializar_pagamento(registro, nomes))
+
+    transacoes = _transacoes(supabase)
+    compras = _compras_do_ciclo(transacoes, cartao, ciclo)
+    ajuste = _ajustes_ativos(supabase, id_cartao, ciclo).get((id_cartao, ciclo), 0.0)
+    pago_ate_agora = _pago_total(supabase, transacoes, id_cartao, ciclo).get((id_cartao, ciclo), 0.0)
+    outstanding = round(compras + ajuste - pago_ate_agora, 2)
+
+    if outstanding <= 0:
+        return json_error("VALIDATION", "Esta fatura não tem valor em aberto.", 422)
+    if modo == "full" and round(valor, 2) != outstanding:
+        return json_error("VALIDATION", f"Pagamento total precisa ser exatamente {outstanding:.2f}.", 422)
+    if valor > outstanding:
+        return json_error("VALIDATION", "O valor é maior do que o saldo em aberto da fatura.", 422)
+
+    saldo_origem = _saldo_conta(origem, transacoes)
+    if saldo_origem < valor:
+        return json_error("INSUFFICIENT_BALANCE", "Saldo insuficiente na conta de origem.", 422)
+
+    nomes = {c["id"]: c["nome"] for c in contas}
+    mirror = supabase.table("despesas").insert({
+        "user_id": _uid(), "nome_despesa": f"Fatura {cartao['nome']}",
+        "descricao": f"Pagamento da fatura de {ciclo}",
+        "categoria": "Outros", "tipo": "despesa", "conta": origem["nome"],
+        "status": "pago", "valor": float(valor), "data": data_pagamento,
+        "recorrente": False, "kind": "transfer",
+    }).execute().data[0]
+
+    try:
+        registro = supabase.table("fatura_pagamentos").insert({
+            "user_id": _uid(), "conta_id": id_cartao, "ciclo": ciclo,
+            "conta_origem_id": origem["id"], "valor": float(valor), "data": data_pagamento,
+            "modo": modo, "status": "active",
+            "transacao_id": mirror["id"], "idempotency_key": chave_idem,
+        }).execute().data[0]
+    except Exception:
+        supabase.table("despesas").delete().eq("id", mirror["id"]).execute()
+        return json_error("CONFLICT", "Não foi possível registrar o pagamento.", 409)
+
+    supabase.table("despesas").update({"fatura_pagamento_id": registro["id"]}).eq("id", mirror["id"]).execute()
+    registro["transacao_id"] = mirror["id"]
+    return json_ok(_serializar_pagamento(registro, nomes), 201)
+
+
+@app.route("/api/v1/invoice-payments/<int:id_pagamento>/reverse", methods=["POST"])
+@com_supabase
+def api_estornar_pagamento(supabase, id_pagamento):
+    """Estornar apaga o pagamento e o gasto dele (a despesa-espelho na conta de
+    origem) na hora: a fatura volta a ficar em aberto e o saldo da conta se
+    recalcula sozinho, porque nada disso e gravado. Idempotente: pagamento que
+    ja nao existe (clique duplo) responde 204 do mesmo jeito."""
+    uid = _uid()
+    registro = supabase.table("fatura_pagamentos").select("*") \
+        .eq("id", id_pagamento).eq("user_id", uid).execute().data
+    if not registro:
+        return "", 204
+    registro = registro[0]
+
+    # A despesa-espelho sai primeiro, sem depender do "on delete cascade" do schema.
+    # Estornos do modelo antigo (pagamento marcado 'reversed' + movimento inverso)
+    # levam o movimento inverso junto, senao sobraria um credito solto.
+    supabase.table("despesas").delete().eq("fatura_pagamento_id", id_pagamento).eq("user_id", uid).execute()
+    for coluna in ("transacao_id", "transacao_estorno_id"):
+        if registro.get(coluna):
+            supabase.table("despesas").delete().eq("id", registro[coluna]).eq("user_id", uid).execute()
+    supabase.table("fatura_pagamentos").delete().eq("id", id_pagamento).eq("user_id", uid).execute()
+
+    # O banco pode recusar o DELETE sem dar erro (politica de seguranca sem permissao de apagar). Sem conferir,
+    # o pagamento continuaria valendo e o valor nunca voltaria para o cartao. Se ficou, ao menos tira ele da
+    # fatura marcando como estornado; se ja estava estornado, avisa em vez de fingir que apagou.
+    if supabase.table("fatura_pagamentos").select("id").eq("id", id_pagamento).eq("user_id", uid).execute().data:
+        if registro.get("status") == "reversed":
+            return json_error(
+                "DELETE_BLOCKED",
+                "O banco não permitiu apagar este registro. Confira a permissão de exclusão da tabela fatura_pagamentos no Supabase.",
+                409,
+            )
+        supabase.table("fatura_pagamentos").update({"status": "reversed", "revertido_em": datetime.utcnow().isoformat()}) \
+            .eq("id", id_pagamento).eq("user_id", uid).execute()
+    return "", 204
+
+
+@app.route("/api/v1/cards/<int:id_cartao>/invoices/<ciclo>/adjustments", methods=["POST"])
+@com_supabase
+def api_ajustar_fatura(supabase, id_cartao, ciclo):
+    corpo = _corpo()
+    contas = _contas(supabase)
+    cartao = _validar_cartao(contas, id_cartao)
+    if not cartao:
+        return json_error("NOT_FOUND", "Cartão não encontrado.", 404)
+
+    motivo = (corpo.get("reason") or "").strip()
+    if len(motivo) < 5:
+        return json_error("VALIDATION", "Informe uma justificativa com pelo menos 5 caracteres.", 422)
+
+    transacoes = _transacoes(supabase)
+    compras = _compras_do_ciclo(transacoes, cartao, ciclo)
+    ajuste_atual = _ajustes_ativos(supabase, id_cartao, ciclo).get((id_cartao, ciclo), 0.0)
+    pago = _pago_total(supabase, transacoes, id_cartao, ciclo).get((id_cartao, ciclo), 0.0)
+    bruto = compras + ajuste_atual
+
+    alvo = corpo.get("total")
+    if not isinstance(alvo, (int, float)) or alvo < 0 or alvo < pago:
+        return json_error("VALIDATION", "O novo total não pode ser negativo nem menor do que já foi pago.", 422)
+
+    delta = round(alvo - bruto, 2)
+    criado = supabase.table("fatura_ajustes").insert({
+        "user_id": _uid(), "conta_id": id_cartao, "ciclo": ciclo,
+        "valor": delta, "motivo": motivo, "status": "active",
+    }).execute().data[0]
+    return json_ok(_serializar_ajuste(criado), 201)
+
+
+# ------------------------------------------------------------------
+# CSV: exportar e importar
+# ------------------------------------------------------------------
+
+@app.route("/api/v1/transactions/export.csv")
+@com_supabase
+def api_exportar_csv(supabase):
+    mes = request.args.get("month") or date.today().strftime("%Y-%m")
+    linhas = _do_mes(_transacoes(supabase), mes)
+
+    buffer = io.StringIO()
+    escritor = csv.writer(buffer, delimiter=";")
+    escritor.writerow(["Descrição", "Categoria", "Data", "Tipo", "Conta", "Status", "Valor"])
+    for t in sorted(linhas, key=lambda t: (t.get("data") or "")):
+        escritor.writerow([
+            t.get("nome_despesa", ""), t.get("categoria", ""), (t.get("data") or "")[:10],
+            t.get("tipo", "despesa"), t.get("conta") or "", t.get("status", "pago"),
+            f"{_valor(t):.2f}".replace(".", ","),
+        ])
+    # BOM na frente: sem isso o Excel em pt-BR abre os acentos quebrados.
+    return Response(
+        "﻿" + buffer.getvalue(), mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="synch-cash-{mes}.csv"'},
     )
 
 
-@app.route("/assistente/limpar", methods=["POST"])
-@login_necessario
-def limpar_conversa():
-    session.pop("conversa", None)
-    return redirect(url_for("assistente"))
+@app.route("/api/v1/transactions/imports", methods=["POST"])
+@com_supabase
+def api_importar_transacoes(supabase):
+    """O parse do CSV/OFX e revisao acontecem no front (ja tem parser
+    testado em lib/transaction-values.ts); aqui so recebe as linhas ja
+    revisadas e confirmadas pelo usuario e grava em lote."""
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return _erro_plano("Importar um arquivo CSV é um recurso do plano Synch IA. Assine para importar suas transações.")
+
+    linhas = _corpo().get("transactions")
+    if not isinstance(linhas, list) or not linhas:
+        return json_error("VALIDATION", "Nenhuma transação para importar.", 422)
+
+    contas = _contas(supabase)
+    categorias_validas = set(CATEGORIAS) | set(_nomes_categorias(supabase))
+    novas = []
+    for linha in linhas[:500]:
+        campos, erro = _validar_transacao_payload(linha, contas)
+        if erro:
+            continue
+        if campos["categoria"] not in categorias_validas:
+            campos["categoria"] = "Outros"
+        data_linha = linha.get("date")
+        try:
+            datetime.strptime(data_linha, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+        novas.append({**campos, "valor": float(linha.get("amount")), "data": data_linha, "user_id": _uid()})
+
+    if not novas:
+        return json_error("VALIDATION", "Não foi possível reconhecer transações válidas.", 422)
+
+    criadas = supabase.table("despesas").insert(novas).execute().data or []
+    contas_por_nome = {_chave_conta(c["nome"]): c for c in contas}
+    return json_ok([_serializar_transacao(t, contas_por_nome) for t in criadas], 201)
+
+
+# ------------------------------------------------------------------
+# Comprovantes (Supabase Storage)
+# ------------------------------------------------------------------
+
+def _garantir_bucket_comprovantes():
+    try:
+        admin = conectar_admin()
+        if admin is not None:
+            admin.storage.create_bucket(RECEIPTS_BUCKET, options={"public": False})
+    except Exception:
+        pass  # ja existe, ou sem permissao pra criar -- segue o fluxo normal
+
+
+@app.route("/api/v1/transactions/<int:id_transacao>/receipts", methods=["POST"])
+@com_supabase
+def api_upload_comprovante(supabase, id_transacao):
+    arquivo = request.files.get("file")
+    if not arquivo or not arquivo.filename:
+        return json_error("VALIDATION", "Envie um arquivo.", 422)
+
+    linha = supabase.table("despesas").select("id").eq("id", id_transacao).eq("user_id", _uid()).execute().data
+    if not linha:
+        return json_error("NOT_FOUND", "Transação não encontrada.", 404)
+
+    _garantir_bucket_comprovantes()
+    caminho = f"{_uid()}/{id_transacao}-{uuid.uuid4().hex}-{arquivo.filename}"
+    try:
+        supabase.storage.from_(RECEIPTS_BUCKET).upload(
+            caminho, arquivo.read(), {"content-type": arquivo.mimetype or "application/octet-stream"}
+        )
+        assinada = supabase.storage.from_(RECEIPTS_BUCKET).create_signed_url(caminho, 60 * 60 * 24 * 7)
+    except Exception:
+        return json_error("UPLOAD_FAILED", "Não foi possível enviar o comprovante.", 502)
+
+    supabase.table("despesas").update({"receipt_name": arquivo.filename}) \
+        .eq("id", id_transacao).eq("user_id", _uid()).execute()
+    url = assinada.get("signedURL") or assinada.get("signed_url") if isinstance(assinada, dict) else None
+    return json_ok({"receiptUrl": url})
+
+
+# ------------------------------------------------------------------
+# Central de qualidade (heuristicas simples sobre os dados existentes)
+# ------------------------------------------------------------------
+
+@app.route("/api/v1/data-quality/issues", methods=["GET"])
+@com_supabase
+def api_qualidade_issues(supabase):
+    transacoes = _transacoes(supabase)
+    contas_conhecidas = {_chave_conta(c["nome"]) for c in _contas(supabase)}
+    issues, vistos = [], {}
+    for t in transacoes:
+        if t.get("quality_resolved") or t.get("kind") == "transfer":
+            continue
+        if t.get("conta") and _chave_conta(t["conta"]) not in contas_conhecidas:
+            issues.append({
+                "id": f"orphan-account-{t['id']}", "type": "orphan_account",
+                "transactionId": t["id"], "message": f"Conta \"{t['conta']}\" não existe mais.",
+            })
+        if (t.get("categoria") or "Outros") == "Outros":
+            issues.append({
+                "id": f"uncategorized-{t['id']}", "type": "uncategorized",
+                "transactionId": t["id"], "message": "Sem categoria específica.",
+            })
+        chave = (round(_valor(t), 2), t.get("data"), _chave_conta(t.get("conta")))
+        if chave in vistos:
+            issues.append({
+                "id": f"duplicate-{t['id']}", "type": "duplicate", "transactionId": t["id"],
+                "message": f"Possível duplicata de \"{t.get('nome_despesa')}\".",
+            })
+        else:
+            vistos[chave] = t["id"]
+    return json_ok(issues)
+
+
+@app.route("/api/v1/data-quality/issues/<issue_id>/resolve", methods=["POST"])
+@com_supabase
+def api_resolver_issue(supabase, issue_id):
+    try:
+        id_transacao = int(issue_id.rsplit("-", 1)[-1])
+    except ValueError:
+        return json_error("NOT_FOUND", "Pendência não encontrada.", 404)
+    supabase.table("despesas").update({"quality_resolved": True}) \
+        .eq("id", id_transacao).eq("user_id", _uid()).execute()
+    return "", 204
+
+
+# ------------------------------------------------------------------
+# Assinatura (Synch IA)
+# ------------------------------------------------------------------
+
+@app.route("/api/v1/billing/subscription", methods=["GET"])
+@com_supabase
+def api_assinatura(supabase):
+    plano = _plano_usuario(supabase)
+    info = CAKTO_PLANOS.get(plano)
+    return json_ok({
+        "plan": plano,
+        "planName": info["nome"] if info else "Grátis",
+        "status": "active" if plano != "gratis" else "none",
+        "renewalAt": None,
+        "checkoutUrl": _link_assinatura("synch_ia"),
+    })
+
+
+@app.route("/api/v1/billing/subscription/cancel", methods=["POST"])
+@com_supabase
+def api_cancelar_assinatura(supabase):
+    # Nao existe cancelamento self-service aqui: a Cakto e a fonte da
+    # verdade do pagamento, e so o webhook dela muda o plano de verdade.
+    return json_ok({
+        "message": "Para cancelar, use o link de gerenciamento enviado no e-mail de confirmação da compra na Cakto.",
+    })
 
 
 # ------------------------------------------------------------------
 # Cakto: webhook que libera/troca/cancela o plano do usuario
 #
-# A Cakto chama essa rota direto do servidor dela (nao do navegador de
-# ninguem), entao nao tem sessao de login aqui -- so da pra confiar no
-# pedido depois de validar a assinatura HMAC (ou o "secret" no corpo,
-# como fallback). Documentacao: https://docs.cakto.com.br/conceitos/webhooks
+# Mantido no caminho ORIGINAL (fora de /api/v1) porque e a URL ja
+# cadastrada no painel da Cakto -- mudar aqui quebraria pagamentos em
+# producao sem reconfigurar nada la. A Cakto chama isso direto do
+# servidor dela, sem sessao de login -- so da pra confiar no pedido
+# depois de validar a assinatura HMAC (ou o "secret" no corpo, como
+# fallback). Docs: https://docs.cakto.com.br/conceitos/webhooks
 # ------------------------------------------------------------------
 
 def _cakto_assinatura_valida(corpo_bruto, timestamp, assinatura_recebida):
-    """HMAC-SHA256 de '{timestamp}.{corpo}' usando o secret do webhook.
-    E o metodo recomendado pela Cakto pra garantir que o pedido veio
-    mesmo de la (sem isso, qualquer um poderia chamar essa rota e se
-    liberar como assinante de graca)."""
     if not (CAKTO_WEBHOOK_SECRET and timestamp and assinatura_recebida):
         return False
     mensagem = f"{timestamp}.{corpo_bruto.decode('utf-8')}"
-    esperada = hmac.new(
-        CAKTO_WEBHOOK_SECRET.encode(), mensagem.encode(), hashlib.sha256
-    ).hexdigest()
+    esperada = hmac.new(CAKTO_WEBHOOK_SECRET.encode(), mensagem.encode(), hashlib.sha256).hexdigest()
     recebida = assinatura_recebida.split("=", 1)[-1]  # tira o prefixo "v1="
     return hmac.compare_digest(esperada, recebida)
 
 
+def _aplicar_pendencia_cakto(admin, user_id, email):
+    """Se a Cakto avisou um pagamento (ou cancelamento) antes desta conta
+    existir, o webhook guardou o estado em cakto_pendencias por e-mail
+    (ver webhook_cakto). Ao criar a conta ou entrar com esse e-mail,
+    aplica esse estado uma vez em 'assinaturas' e limpa a pendencia --
+    assim quem pagou antes de ter conta continua com o plano pago na
+    Cakto, sem depender de pedir pra Cakto reenviar o webhook."""
+    if admin is None:
+        return
+    chave = _chave_email(email)
+    if not chave:
+        return
+    try:
+        pendencias = admin.table("cakto_pendencias").select("*").eq("email", chave).execute().data
+        if not pendencias:
+            return
+        pendencia = pendencias[0]
+        admin.table("assinaturas").upsert({
+            "user_id": user_id, "plano": pendencia.get("plano") or "gratis",
+            "cakto_evento": pendencia.get("cakto_evento"), "cakto_id": pendencia.get("cakto_id"),
+            "atualizada_em": datetime.utcnow().isoformat(),
+        }).execute()
+        admin.table("cakto_pendencias").delete().eq("email", chave).execute()
+    except Exception:
+        pass  # nao pode travar login/cadastro por causa disso -- o webhook tenta de novo no proximo evento
+
+
 def _achar_usuario_por_email(admin, email):
     """Nao tem 'buscar por e-mail' no client do Supabase -- so listar
-    paginado. Pro tamanho deste app (nao um SaaS com milhares de contas)
-    isso e suficiente; o limite de paginas e so pra nunca rodar pra sempre."""
+    paginado. Pro tamanho deste app isso e suficiente."""
     pagina, por_pagina = 1, 200
     while pagina <= 20:
         usuarios = admin.auth.admin.list_users(page=pagina, per_page=por_pagina)
@@ -2101,11 +1970,7 @@ def webhook_cakto():
         request.headers.get("X-Cakto-Signature"),
     )
     if not valido and CAKTO_WEBHOOK_SECRET:
-        # Segundo metodo que a Cakto aceita: o campo "secret" no corpo
-        # batendo com o nosso, comparado sem vazar tempo de execucao.
-        valido = hmac.compare_digest(
-            str(payload.get("secret") or ""), CAKTO_WEBHOOK_SECRET
-        )
+        valido = hmac.compare_digest(str(payload.get("secret") or ""), CAKTO_WEBHOOK_SECRET)
     if not valido:
         return "assinatura invalida", 401
 
@@ -2118,12 +1983,9 @@ def webhook_cakto():
         oferta_id = (dados.get("offer") or {}).get("id")
         plano = CAKTO_OFERTA_PARA_PLANO.get(oferta_id)
         if not plano:
-            # Oferta que a gente nao reconhece (ex.: produto novo criado
-            # na Cakto sem atualizar CAKTO_PLANOS aqui) -- melhor nao
-            # liberar nada errado do que adivinhar qual plano e.
             return "", 200
     else:
-        plano = "gratis"  # cancelamento, reembolso, chargeback etc. sempre derruba pro gratis
+        plano = "gratis"
 
     email = ((dados.get("customer") or {}).get("email") or "").strip().lower()
     admin = conectar_admin()
@@ -2132,125 +1994,113 @@ def webhook_cakto():
 
     usuario = _achar_usuario_por_email(admin, email)
     if not usuario:
-        # Pagou mas ainda nao tem conta no app (ou usou outro e-mail no
-        # checkout) -- nao tem em quem marcar a assinatura ainda.
+        # Pagou (ou cancelou) mas ainda nao tem conta no app -- ou usou outro
+        # e-mail no checkout. Guarda o estado por e-mail; api_register e
+        # api_login aplicam isso em 'assinaturas' na primeira vez que essa
+        # pessoa criar a conta ou entrar com esse e-mail.
+        admin.table("cakto_pendencias").upsert({
+            "email": email, "plano": plano,
+            "cakto_evento": evento, "cakto_id": dados.get("id"),
+            "atualizada_em": datetime.utcnow().isoformat(),
+        }).execute()
         return "", 200
 
     admin.table("assinaturas").upsert({
-        "user_id": usuario.id,
-        "plano": plano,
-        "cakto_evento": evento,
-        "cakto_id": dados.get("id"),
+        "user_id": usuario.id, "plano": plano,
+        "cakto_evento": evento, "cakto_id": dados.get("id"),
         "atualizada_em": datetime.utcnow().isoformat(),
     }).execute()
-
+    # A conta ja existia, entao ja foi aplicado direto -- limpa uma pendencia
+    # antiga desse e-mail (se sobrou uma de antes da conta existir).
+    admin.table("cakto_pendencias").delete().eq("email", email).execute()
     return "", 200
 
 
 # ------------------------------------------------------------------
-# Configuracoes
+# Assistente (analise local por regras, sem chamar nenhum modelo
+# externo -- le as transacoes do mes e responde sobre o que ja esta
+# no banco).
 # ------------------------------------------------------------------
 
-@app.route("/configuracoes")
-@com_supabase
-def configuracoes(supabase):
-    return render_template("configuracoes.html", **_contexto_base(supabase, "settings"))
+def _responder(pergunta, gasto, orcamento, maior, qtd, metas_usuario):
+    texto = pergunta.lower()
 
+    if "mais" in texto or "gast" in texto:
+        if not maior:
+            return "Ainda não há despesas suficientes neste mês para analisar."
+        pct = round(maior[1] / gasto * 100) if gasto else 0
+        return f"{maior[0]} é sua maior categoria, com R$ {maior[1]:.2f}, representando {pct}% das despesas do mês."
 
-@app.route("/preferencias/salvar", methods=["POST"])
-@com_supabase
-def salvar_preferencias(supabase):
-    # update, nao upsert: o upsert do PostgREST manda 'missing=null', entao
-    # toda coluna fora do payload vira NULL no INSERT e as NOT NULL da tabela
-    # estouram. _preferencias garante que a linha existe.
-    _preferencias(supabase)
-    supabase.table("preferencias").update({
-        "nome": (request.form.get("nome") or "").strip() or "Usuário",
-        "notificacoes": request.form.get("notificacoes") == "on",
-        "resumo_semanal": request.form.get("resumo_semanal") == "on",
-    }).eq("user_id", _uid()).execute()
-    flash("Preferências salvas.")
-    return _voltar()
+    if "econom" in texto or "poupar" in texto:
+        sobra = max(0, orcamento - gasto)
+        alvo = maior[0] if maior else "a categoria mais frequente"
+        corte = (maior[1] * 0.1) if maior else 0
+        return f"Seu orçamento ainda tem R$ {sobra:.2f} disponível. Um corte de 10% em {alvo} já libera R$ {corte:.2f}."
 
-
-# ------------------------------------------------------------------
-# CSV
-# ------------------------------------------------------------------
-
-@app.route("/exportar.csv")
-@com_supabase
-def exportar_csv(supabase):
-    mes = _mes_selecionado()
-    linhas = _do_mes(_transacoes(supabase), mes)
-
-    buffer = io.StringIO()
-    escritor = csv.writer(buffer, delimiter=";")
-    escritor.writerow(["Descrição", "Categoria", "Data", "Tipo", "Conta", "Status", "Valor"])
-    for t in sorted(linhas, key=lambda t: (t.get("data") or "")):
-        escritor.writerow([
-            t.get("nome_despesa", ""), t.get("categoria", ""), (t.get("data") or "")[:10],
-            t.get("tipo", "despesa"), t.get("conta") or "", t.get("status", "pago"),
-            f"{_valor(t):.2f}".replace(".", ","),
-        ])
-
-    # BOM na frente: sem isso o Excel em pt-BR abre os acentos quebrados.
-    return Response(
-        "﻿" + buffer.getvalue(),
-        mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="synch-cash-{mes}.csv"'},
-    )
-
-
-@app.route("/importar", methods=["POST"])
-@com_supabase
-def importar_csv(supabase):
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return _bloquear_por_plano(
-            "Importar um arquivo CSV é um recurso do plano Synch IA. Assine para importar suas transações."
+    if "meta" in texto:
+        if not metas_usuario:
+            return "Você ainda não cadastrou metas. Comece por uma reserva de emergência."
+        pendente = min(
+            metas_usuario,
+            key=lambda m: (float(m.get("guardado") or 0) / (float(m.get("alvo") or 1) or 1)),
         )
+        falta = max(0, float(pendente.get("alvo") or 0) - float(pendente.get("guardado") or 0))
+        return f"Priorize \"{pendente['nome']}\": faltam R$ {falta:.2f} para concluir. Automatize um aporte logo depois da entrada da renda."
 
-    arquivo = request.files.get("arquivo")
-    if not arquivo or not arquivo.filename:
-        flash("Escolha um arquivo CSV.")
-        return _voltar()
+    if "pendente" in texto or "conta" in texto:
+        return "Confira a aba Transações filtrando por status Pendente para ver o que vence."
 
-    conteudo = arquivo.read().decode("utf-8-sig", errors="replace")
-    # Aceita ';' (padrao do Excel brasileiro) e ',' (exportacao generica).
-    delimitador = ";" if conteudo.count(";") >= conteudo.count(",") else ","
-    leitor = csv.reader(io.StringIO(conteudo), delimiter=delimitador)
+    pct = round(gasto / orcamento * 100) if orcamento else 0
+    return f"Analisei {qtd} movimentações deste mês. Seu gasto atual utiliza {pct}% do orçamento planejado."
 
-    # Categorias custom do usuario tambem sao validas aqui -- sem isso um
-    # CSV com uma categoria criada na tela de orcamentos caia em "Outros".
-    categorias_validas = set(CATEGORIAS) | set(_orcamentos(supabase))
 
-    novas = []
-    for i, coluna in enumerate(leitor):
-        if i == 0 or len(coluna) < 3:
-            continue
-        nome = coluna[0].strip()
-        valor = _numero(coluna[6] if len(coluna) > 6 else coluna[-1])
-        data_linha = (coluna[2] or "").strip()[:10]
-        if not nome or valor <= 0 or len(data_linha) != 10:
-            continue
-        categoria = coluna[1].strip() if len(coluna) > 1 else "Outros"
-        novas.append({
-            "user_id": _uid(), "nome_despesa": nome, "descricao": "",
-            "categoria": categoria if categoria in categorias_validas else "Outros",
-            "data": data_linha, "valor": valor,
-            "tipo": "receita" if len(coluna) > 3 and coluna[3].strip() == "receita" else "despesa",
-            "conta": coluna[4].strip() if len(coluna) > 4 else None,
-            "status": "pendente" if len(coluna) > 5 and coluna[5].strip() == "pendente" else "pago",
-            "recorrente": False,
-        })
+@app.route("/api/v1/assistant/messages", methods=["POST"])
+@com_supabase
+def api_assistente(supabase):
+    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
+        return _erro_plano("O Assistente financeiro (texto e voz) é exclusivo do plano Synch IA.")
 
-    if not novas:
-        flash("Não foi possível reconhecer transações nesse arquivo.")
-        return _voltar()
+    corpo = _corpo()
+    pergunta = (corpo.get("message") or "").strip()
+    if not pergunta:
+        return json_error("VALIDATION", "Envie uma mensagem.", 422)
 
-    supabase.table("despesas").insert(novas).execute()
-    flash(f"{len(novas)} transações importadas.")
-    return _voltar()
+    todas = _transacoes(supabase)
+    do_mes = _do_mes(todas, _mes_atual())
+    limites = _orcamentos(supabase)
+
+    gastas = [t for t in do_mes if _e_despesa(t) and t.get("kind") != "transfer" and t.get("status") == "pago"]
+    gasto = sum(_valor(t) for t in gastas)
+    orcamento_total = sum(limites.values())
+
+    por_categoria = defaultdict(float)
+    for t in gastas:
+        por_categoria[t.get("categoria") or "Outros"] += _valor(t)
+    maior = max(por_categoria.items(), key=lambda i: i[1], default=None)
+
+    resposta = _responder(pergunta, gasto, orcamento_total, maior, len(do_mes), _metas(supabase))
+    return json_ok({"conversationId": corpo.get("conversationId") or str(uuid.uuid4()), "answer": resposta})
+
+
+# ------------------------------------------------------------------
+# Erros: tudo em JSON, nunca a pagina de erro HTML padrao do Flask.
+# ------------------------------------------------------------------
+
+@app.errorhandler(404)
+def _nao_encontrado(e):
+    return json_error("NOT_FOUND", "Rota não encontrada.", 404)
+
+
+@app.errorhandler(405)
+def _metodo_nao_permitido(e):
+    return json_error("METHOD_NOT_ALLOWED", "Método não permitido.", 405)
+
+
+@app.errorhandler(Exception)
+def _erro_interno(e):
+    app.logger.exception("Erro nao tratado")
+    return json_error("INTERNAL_ERROR", "Erro interno. Tente novamente.", 500)
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5000)

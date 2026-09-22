@@ -1,0 +1,23 @@
+{
+  "name": "Synch Cash — Controle financeiro",
+  "short_name": "Synch Cash",
+  "description": "Controle contas, cartões, orçamentos, metas e decisões financeiras.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050607",
+  "theme_color": "#050607",
+  "lang": "pt-BR",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/synch-cash-logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "Nova transação", "short_name": "Nova", "url": "/?action=new" },
+    { "name": "Assistente", "short_name": "Synch IA", "url": "/?view=assistant" }
+  ]
+}

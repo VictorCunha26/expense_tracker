@@ -1,0 +1,85 @@
+/* Mobile layout layer: preserve desktop composition and all local actions. */
+@media (max-width: 767px) {
+  html { scroll-padding-top: 120px; }
+  .app-shell, .main-content, .surface, .view-stack { min-width: 0; }
+  .main-content { padding: 16px 12px calc(100px + env(safe-area-inset-bottom)); }
+  .topbar { flex-wrap: wrap; gap: 10px; padding: calc(12px + env(safe-area-inset-top)) 12px 12px; }
+  .topbar-title { width: 100%; min-width: 0; }
+  .topbar-title h1 { max-width: none; white-space: normal; font-size: 23px; line-height: 1.2; }
+  .topbar-title p { display: block; font-size: 12px; }
+  .topbar-actions { width: 100%; justify-content: flex-end; gap: 8px; }
+  .topbar .period-selector { display: flex; width: auto; min-width: 128px; margin-right: auto; }
+  .topbar .period-selector span, .topbar .period-selector > svg:last-child { display: inline; }
+  .topbar .notification-button { display: inline-flex; width: 44px; height: 44px; }
+  .topbar .new-transaction-button { display: none; }
+  .sidebar-nav-button { min-height: 46px; font-size: 14px; }
+  [data-mobile="true"] { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); max-width: calc(100vw - 36px); }
+  .mobile-bottom-nav { left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); height: 70px; }
+  .mobile-bottom-nav button { min-width: 0; min-height: 48px; }
+  .mobile-bottom-nav button span { font-size: 11px; }
+  body:has(input:focus, textarea:focus, [contenteditable="true"]:focus) .mobile-bottom-nav { display: none; }
+  input:not([type="checkbox"]):not([type="radio"]), textarea, select { font-size: 16px !important; }
+  input, textarea, [data-slot="select-trigger"] { min-width: 0; max-width: 100%; }
+  [data-slot="input"], [data-slot="select-trigger"], [data-slot="button"] { min-height: 44px; }
+  [data-slot="select-trigger"] { white-space: normal; height: auto; text-align: left; }
+  [data-slot="dropdown-menu-item"], [data-slot="select-item"] { min-height: 44px; font-size: 14px; }
+  [data-slot="dialog-content"], [data-slot="alert-dialog-content"] { width: calc(100% - 24px); max-width: 560px; max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; padding: 24px 16px 16px; scroll-padding: 16px; }
+  [data-slot="dialog-header"] { padding-right: 24px; text-align: left; }
+  [data-slot="dialog-close"] { width: 44px; height: 44px; top: 4px; right: 4px; display: grid; place-items: center; }
+  [data-slot="dialog-title"] { line-height: 1.3; }
+  [data-slot="dialog-footer"], [data-slot="alert-dialog-footer"] { flex-direction: column-reverse; gap: 8px; }
+  [data-slot="dialog-footer"] button, [data-slot="alert-dialog-footer"] button { width: 100%; white-space: normal; }
+  .transaction-form, .simple-form, .settings-fields, .onboarding-fields, .payment-form-grid, .account-editor-grid, .assistant-draft-fields { grid-template-columns: minmax(0, 1fr); }
+  .field-span-2, .type-toggle { grid-column: 1 / -1; }
+  .field > span, .settings-fields label > span { font-size: 13px; }
+  .panel-title-row { flex-wrap: wrap; gap: 12px; }
+  .panel-actions { flex-wrap: wrap; width: 100%; }
+  .panel-actions > button { flex: 1; }
+  .surface h2 { line-height: 1.35; }
+  .surface p { overflow-wrap: anywhere; }
+  .card-command-grid, .card-detail-grid, .calendar-side-grid, .account-billing-grid, .app-plan-grid, .settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .card-center-v2 { padding-bottom: 0; }
+  .card-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card-metrics > div { min-width: 0; padding: 12px; }
+  .card-metrics strong { font-size: 18px; overflow-wrap: anywhere; }
+  .invoice-toolbar, .invoice-filters { flex-wrap: wrap; }
+  .invoice-toolbar > *, .invoice-filters > * { min-width: 0; max-width: 100%; }
+  .mobile-transaction-table { display: block; width: 100%; min-width: 0; }
+  .mobile-transaction-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .mobile-transaction-table tbody { display: grid; gap: 10px; }
+  .mobile-transaction-table tbody tr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 14px; border: 1px solid #27312b; border-radius: 12px; position: relative; }
+  .mobile-transaction-table td { display: block !important; padding: 0; border: 0; white-space: normal; font-size: 13px; }
+  .mobile-transaction-table td:first-child { width: calc(100% - 40px); }
+  .mobile-transaction-table .transaction-name { min-width: 0; }
+  .mobile-transaction-table .transaction-name strong { white-space: normal; font-size: 14px; overflow-wrap: anywhere; }
+  .mobile-transaction-table .transaction-name small { white-space: normal; font-size: 11px; }
+  .mobile-transaction-table .amount-cell { width: 100%; font-size: 17px; text-align: left; padding-top: 5px; }
+  .mobile-transaction-table .transaction-row-actions { position: absolute; right: 8px; top: 8px; }
+  .mobile-transaction-table .category-badge, .mobile-transaction-table .status { font-size: 11px; }
+  .assistant-chat-v3 { min-height: calc(100dvh - 240px); }
+  .assistant-thread-v3 { min-height: 240px; max-height: 55dvh; overflow-y: auto; overscroll-behavior: contain; }
+  .assistant-chat-v3 .assistant-composer { position: sticky; bottom: 0; background: #090d0b; padding: 12px; z-index: 2; }
+  .assistant-composer > div { min-width: 0; }
+  .assistant-composer small { display: none !important; }
+  .assistant-chat-v3 .assistant-message { width: 100%; font-size: 14px; overflow-wrap: anywhere; }
+  .assistant-context-panel { max-height: calc(100dvh - 28px); }
+  .assistant-voice-overlay { padding-top: calc(18px + env(safe-area-inset-top)); padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .voice-overlay-actions button { min-height: 48px; font-size: 14px; }
+  .voice-overlay-close { top: max(12px, env(safe-area-inset-top)); min-width: 44px; min-height: 44px; }
+  .login-access { padding-block: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-bottom)); }
+  .login-mobile-brand { margin-bottom: 24px; }
+  .login-options { flex-wrap: wrap; gap: 12px; }
+  .login-options button { min-height: 44px; }
+  .offline-banner { margin: 12px; align-items: flex-start; }
+  .offline-banner svg { flex-shrink: 0; }
+  [data-sonner-toaster] { bottom: calc(92px + env(safe-area-inset-bottom)) !important; }
+}
+@media (max-width: 380px) {
+  .topbar .period-selector { min-width: 114px; }
+  .topbar-actions { gap: 5px; }
+  .card-metrics strong { font-size: 16px; }
+  .movement-tabs { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1000px) and (orientation: landscape) {
+  [data-slot="dialog-content"], [data-slot="alert-dialog-content"] { max-height: calc(100dvh - 24px); overflow-y: auto; }
+}

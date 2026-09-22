@@ -3,12 +3,24 @@
         {
             "src": "app.py",
             "use": "@vercel/python"
+        },
+        {
+            "src": "frontend/package.json",
+            "use": "@vercel/next"
         }
     ],
-    "routes":[
+    "routes": [
+        {
+            "src": "/api/(.*)",
+            "dest": "/app.py"
+        },
+        {
+            "src": "/webhooks/(.*)",
+            "dest": "/app.py"
+        },
         {
             "src": "/(.*)",
-            "dest": "/app.py"
+            "dest": "/frontend/$1"
         }
     ]
 }
