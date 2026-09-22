@@ -349,6 +349,9 @@ const inferAssistantDraft = (text: string, accountNames: string[]): VoiceDraft =
   return { description: assistantDescription(text, type, category), amount: amount ? String(amount).replace(".", ",") : "", type, category, date: assistantDate(text), account, status: /(pendente|a pagar|vencimento|vence)/.test(normalized) ? "pending" : "paid", installments: installmentMatch ? Math.max(1, Number(installmentMatch[1])) : 1, recurring: /(recorrente|todo mes|mensal|assinatura fixa)/.test(normalized), confidence: 72 + explicitSignals.filter(Boolean).length * 6 }
 }
 const splitAssistantTransactions = (text: string) => normalizeSpeech(text).split(/\s+(?:e tambem|e depois|depois|e)\s+(?=(?:(?:gastei|paguei|comprei|recebi|ganhei|entrou)\s+)?(?:r\$\s*)?\d)/i).map((part) => part.trim()).filter(Boolean)
+// Uma frase por vez (com uma pausa curta entre elas) soa muito mais natural do que jogar o texto
+// inteiro pro navegador de uma vez: cada engine de voz tende a "achatar" a entonação num bloco só.
+const splitSentences = (text: string) => text.match(/[^.!?]+[.!?]*(?:\s+|$)/g)?.map((sentence) => sentence.trim()).filter(Boolean) || [text]
 
 function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, recurring, setRecurring, goals, setGoals, accounts, month, userName }: { items: Transaction[]; budgets: Record<string, number>; hidden: boolean; setItems: Dispatch<SetStateAction<Transaction[]>>; setBudgets: Dispatch<SetStateAction<Record<string, number>>>; recurring: RecurringData[]; setRecurring: Dispatch<SetStateAction<RecurringData[]>>; goals: GoalData[]; setGoals: Dispatch<SetStateAction<GoalData[]>>; accounts: Account[]; month: MonthKey; userName: string }) {
   const categories = useCategories()
@@ -366,7 +369,7 @@ function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, rec
   const [lastUndo, setLastUndo] = useState<AssistantUndo | null>(null)
   const [panelOpen, setPanelOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 1000), [voiceMode, setVoiceMode] = useState(false), [voiceSeconds, setVoiceSeconds] = useState(0)
   const [activity, setActivity] = useStoredState<AssistantActivity[]>("synch-cash-assistant-activity-v1", [])
-  const recognitionRef = useRef<VoiceRecognition | null>(null), utteranceRef = useRef<SpeechSynthesisUtterance | null>(null), messagesEndRef = useRef<HTMLDivElement | null>(null), idCounterRef = useRef(100000)
+  const recognitionRef = useRef<VoiceRecognition | null>(null), utteranceRef = useRef<SpeechSynthesisUtterance | null>(null), messagesEndRef = useRef<HTMLDivElement | null>(null), idCounterRef = useRef(100000), speakTokenRef = useRef(0)
   const nextId = () => { idCounterRef.current += 1; return idCounterRef.current }
   const accountNames = accounts.map((account) => account.name)
   const currentItems = items.filter((item) => item.date.startsWith(month) && item.kind !== "transfer"), expenses = currentItems.filter((item) => item.type === "expense" && item.status === "paid"), incomes = currentItems.filter((item) => item.type === "income" && item.status === "paid")
@@ -378,22 +381,45 @@ function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, rec
   const nowLabel = () => new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
   const speechReadyText = (text: string) => text
     .replace(/R\$\s*([\d.]+),([0-9]{2})/g, (_, whole: string, cents: string) => `${Number(whole.replace(/\./g, ""))} reais${cents !== "00" ? ` e ${Number(cents)} centavos` : ""}`)
-    .replace(/(\d+)%/g, "$1 por cento").replace(/\bPIX\b/gi, "pícs").replace(/[“”]/g, "").replace(/•|→/g, ", ").replace(/\s+/g, " ").trim()
+    .replace(/(\d+)%/g, "$1 por cento").replace(/\bPIX\b/gi, "pícs").replace(/[“”]/g, "")
+    // travessão e aspas de vírgula soam como um tropeço na maioria das vozes -- uma vírgula real da uma pausa natural.
+    .replace(/[–—]/g, ",").replace(/•|→/g, ", ").replace(/\s+/g, " ").trim()
+  // "Melhor disponível": prioriza vozes que o proprio nome ja avisa que sao de qualidade (neural/online,
+  // enhanced/premium) antes das vozes do sistema (em geral mais robóticas, tipo eSpeak/SAPI clássico).
   const preferredVoice = () => {
     const portuguese = availableVoices.filter((voice) => /^pt(-|_)/i.test(voice.lang))
     if (voiceId !== "auto") return availableVoices.find((voice) => voice.voiceURI === voiceId) || portuguese[0]
-    const priority = [/enhanced|premium|natural/i, /luciana/i, /francisca/i, /maria/i, /google.*portugu/i, /microsoft.*portugu/i, /antonio/i]
+    const priority = [/neural|online.*natural|natural.*online/i, /enhanced|premium/i, /google.*portugu/i, /luciana/i, /francisca/i, /thalita/i, /maria/i, /antonio/i, /microsoft.*portugu/i]
     return priority.map((pattern) => portuguese.find((voice) => pattern.test(voice.name))).find(Boolean) || portuguese.find((voice) => /pt[-_]br/i.test(voice.lang)) || portuguese[0]
   }
-  const stopSpeaking = () => { window.speechSynthesis?.cancel(); utteranceRef.current = null; setSpeaking(false) }
+  const stopSpeaking = () => { speakTokenRef.current += 1; window.speechSynthesis?.cancel(); utteranceRef.current = null; setSpeaking(false) }
+  // Fala frase por frase (não o texto inteiro de uma vez): dá uma pausa curta e uma variação pequena
+  // de ritmo/tom entre elas, porque ninguém fala duas frases seguidas com a entonação idêntica -- é
+  // essa repetição perfeita que faz a voz do navegador parecer robótica mesmo numa voz boa.
   const speak = (text: string, force = false) => {
     if ((!voiceOutput && !force) || !("speechSynthesis" in window)) return
-    stopSpeaking()
-    const utterance = new SpeechSynthesisUtterance(speechReadyText(text)), settings = voiceStyle === "calm" ? { rate: .86, pitch: 1 } : voiceStyle === "direct" ? { rate: 1.02, pitch: .98 } : { rate: .92, pitch: 1 }
-    utterance.lang = "pt-BR"; utterance.rate = settings.rate; utterance.pitch = settings.pitch; utterance.volume = 1
-    const voice = preferredVoice(); if (voice) utterance.voice = voice
-    utterance.onstart = () => setSpeaking(true); utterance.onend = () => { utteranceRef.current = null; setSpeaking(false) }; utterance.onerror = () => { utteranceRef.current = null; setSpeaking(false) }
-    utteranceRef.current = utterance; window.speechSynthesis.speak(utterance)
+    window.speechSynthesis.cancel()
+    const token = ++speakTokenRef.current
+    const base = voiceStyle === "calm" ? { rate: .92, pitch: 1.03 } : voiceStyle === "direct" ? { rate: 1.08, pitch: .97 } : { rate: 1, pitch: 1 }
+    const voice = preferredVoice(), sentences = splitSentences(speechReadyText(text))
+    const speakAt = (index: number) => {
+      if (token !== speakTokenRef.current) return
+      if (index >= sentences.length) { utteranceRef.current = null; setSpeaking(false); return }
+      try {
+        const utterance = new SpeechSynthesisUtterance(sentences[index])
+        utterance.lang = "pt-BR"
+        utterance.rate = Math.min(1.3, Math.max(.7, base.rate + (Math.random() - .5) * .06))
+        utterance.pitch = Math.min(1.6, Math.max(.6, base.pitch + (Math.random() - .5) * .08))
+        utterance.volume = 1
+        if (voice) utterance.voice = voice
+        utterance.onstart = () => setSpeaking(true)
+        utterance.onerror = () => { if (token === speakTokenRef.current) { utteranceRef.current = null; setSpeaking(false) } }
+        utterance.onend = () => { if (token === speakTokenRef.current) window.setTimeout(() => speakAt(index + 1), index + 1 < sentences.length ? 120 : 0) }
+        utteranceRef.current = utterance
+        window.speechSynthesis.speak(utterance)
+      } catch { if (token === speakTokenRef.current) { utteranceRef.current = null; setSpeaking(false) } } // navegador recusou a voz escolhida -- para em silêncio em vez de travar a conversa
+    }
+    speakAt(0)
   }
   const assistantReply = (text: string) => { const id = nextId(); setConversation((current) => [...current, { id, role: "assistant" as const, text, time: nowLabel() }].slice(-50)); speak(text) }
   const userMessage = (text: string, source: "text" | "voice") => { const id = nextId(); setConversation((current) => [...current, { id, role: "user" as const, text, source, time: nowLabel() }].slice(-50)) }
@@ -675,7 +701,7 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: () => Promise<void>
 
 export default function HomePage() {
   const [view, setView] = useState<ViewKey>("overview"), [month, setMonth] = useState<MonthKey>(monthKeyAt(0)), [query, setQuery] = useState(""), [hidden, setHidden] = useState(false)
-  const sync = useSynchData()
+  const sync = useSynchData(() => setView("subscription"))
   const { status, transactions: items, accounts, budgets, recurring, goals, preferences: prefs, plan, invoicePayments, invoiceAdjustments, categories: categoryNames } = sync
   const ledger: LocalLedger = { version: 2, accounts, items, payments: invoicePayments, adjustments: invoiceAdjustments }
   const setPrefs = (action: SetStateAction<Preferences>) => { const next = typeof action === "function" ? (action as (p: Preferences) => Preferences)(prefs) : action; sync.savePreferences(next) }
@@ -713,6 +739,16 @@ export default function HomePage() {
   const [modalOpen, setModalOpen] = useState(false), [editing, setEditing] = useState<number | null>(null), [form, setForm] = useState<FormState>(defaultForm), [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null)
   const [commandOpen, setCommandOpen] = useState(false), [importOpen, setImportOpen] = useState(false), [importDrafts, setImportDrafts] = useState<Transaction[]>([]), [online, setOnline] = useState(true)
   useMotionEffects(view, month)
+  // Quem não tem Synch IA nunca chega a ver o chat do Assistente -- nem uma prévia bloqueada: o redirecionamento
+  // acontece antes de renderizar a tela, então some pra quem não pagou e só volta a aparecer depois da assinatura
+  // confirmada. Espera `status === "authenticated"` pra não julgar pelo plano padrão ("gratis") antes do bootstrap
+  // real carregar (ex.: um link direto ?view=assistant, que muda a view antes dos dados chegarem).
+  useEffect(() => {
+    if (view === "assistant" && plan !== "synch_ia" && status === "authenticated") {
+      toast.info("O Assistente financeiro (texto e voz) é exclusivo do plano Synch IA. Assine para liberar o chat.")
+      setView("subscription")
+    }
+  }, [view, plan, status])
   useEffect(() => {
     const updateOnline = () => setOnline(navigator.onLine)
     updateOnline(); window.addEventListener("online", updateOnline); window.addEventListener("offline", updateOnline)

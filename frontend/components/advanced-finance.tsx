@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts"
-import { Bot, CalendarDays, Calculator, Check, CircleDollarSign, Clock3, CreditCard, Landmark, LayoutDashboard, Plus, ReceiptText, RefreshCcw, Settings, Sparkles, Target, TrendingUp } from "lucide-react"
+import { ArrowRight, Bot, CalendarDays, Calculator, Check, CircleDollarSign, Clock3, CreditCard, Landmark, LayoutDashboard, Lock, Plus, ReceiptText, RefreshCcw, Settings, Sparkles, Target, TrendingUp, Wallet } from "lucide-react"
 import { toast } from "sonner"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
@@ -73,13 +73,25 @@ export function PlanningView({ items, accounts, goals, recurring, hidden }: { it
   return <div className="view-stack"><section className="planning-kpis"><article className="surface"><span><Landmark /></span><div><small>Patrimônio líquido</small><strong>{show(netWorth)}</strong><p>{show(assets)} em ativos − {show(debts)} em dívidas</p></div></article><article className="surface"><span><TrendingUp /></span><div><small>Previsão no fim do mês</small><strong className={forecast >= 0 ? "positive" : "negative"}>{show(forecast)}</strong><p>Calculada pelo ritmo atual e despesas fixas</p></div></article><article className="surface"><span><Target /></span><div><small>Total guardado em metas</small><strong>{show(goals.reduce((sum, goal) => sum + goal.saved, 0))}</strong><p>{goals.length} objetivo{goals.length === 1 ? "" : "s"} em andamento</p></div></article></section><article className="surface net-worth-chart"><div className="card-heading"><div><h2>Evolução projetada</h2><p>Cenário para os próximos seis meses</p></div><span className="period-chip">Estimativa</span></div><div><ResponsiveContainer width="100%" height="100%"><AreaChart data={forecastData}><defs><linearGradient id="worthGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#35d168" stopOpacity={.28} /><stop offset="100%" stopColor="#35d168" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#1b211d" vertical={false} /><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: "#758078" }} /><YAxis hide={hidden} axisLine={false} tickLine={false} tick={{ fill: "#758078" }} /><ChartTooltip contentStyle={{ background: "#0b0d0f", border: "1px solid #282c31", borderRadius: 10 }} formatter={(value) => hidden ? "Oculto" : money.format(Number(value))} /><Area type="monotone" dataKey="value" stroke="#35d168" strokeWidth={2.5} fill="url(#worthGradient)" /></AreaChart></ResponsiveContainer></div></article></div>
 }
 
+function PlanCard({ tone, badge, icon: Icon, eyebrow, name, description, quote, price, period, monthly, features, cta, note }: { tone: "complete" | "basic"; badge: string; icon: typeof Sparkles; eyebrow: string; name: string; description: string; quote?: string; price: string; period: string; monthly?: string; features: string[]; cta?: ReactNode; note?: string }) {
+  return <article className={`surface plan-card plan-card-${tone}`}>
+    <div className="plan-card-top"><span className="plan-card-icon"><Icon /></span><span className="plan-card-badge">{badge}</span></div>
+    <small className="plan-card-eyebrow">{eyebrow}</small>
+    <h3>{name}</h3>
+    <p className="plan-card-description">{description}</p>
+    {quote && <p className="plan-card-quote">{quote}</p>}
+    <div className="plan-card-price"><strong>{price}</strong><span>{period}</span></div>
+    {monthly && <p className="plan-card-monthly">{monthly}</p>}
+    {cta}
+    {note && <p className="plan-card-note"><Lock /> {note}</p>}
+    <ul className="plan-card-features">{features.map((feature) => <li key={feature}><Check />{feature}</li>)}</ul>
+  </article>
+}
+
 export function SubscriptionView({ plan }: { plan: PlanKey }) {
   const [cancelOpen, setCancelOpen] = useState(false)
   const [checkoutUrl, setCheckoutUrl] = useState<string | undefined>()
   useEffect(() => { synchApi.getSubscription().then((data) => setCheckoutUrl(data.checkoutUrl)).catch(() => undefined) }, [])
-  // O Synch IA é o único plano à venda: R$ 149,90 por ano, ou 12x de R$ 15,57 no parcelado. O Básico Vitalício só aparece como "plano atual" de quem ainda não assinou.
-  const synchIa = { name: "Synch IA", description: "Controle com inteligência", price: "R$ 149,90", period: "/ano", installments: "R$ 15,57", features: ["Contas, cartões e parcelas ilimitados", "Relatórios completos e importação CSV", "Assistente por texto e voz"] }
-  const current = plan === "synch_ia" ? synchIa : { name: "Básico Vitalício", description: "Controle essencial" }
   const subscribed = plan === "synch_ia"
   const upgrade = () => { if (checkoutUrl) window.open(checkoutUrl, "_blank", "noopener,noreferrer") }
   const confirmCancel = async () => {
@@ -87,7 +99,29 @@ export function SubscriptionView({ plan }: { plan: PlanKey }) {
     try { const result = await synchApi.cancelSubscription(); toast.info(result.message) }
     catch { toast.error("Não foi possível concluir. Tente novamente.") }
   }
-  return <div className="view-stack"><section className="surface subscription-account-hero"><div><span>Plano atual</span><h2>{current.name}</h2><p>{current.description}</p></div><div><small>Próxima cobrança</small><strong>{subscribed ? "Renovação anual" : "Sem cobrança"}</strong><span>{subscribed ? `${synchIa.price}${synchIa.period}` : "R$ 0"}</span></div></section>{plan === "synch_ia" && <section className="surface usage-card"><div><span><Bot /></span><div><h3>Assistente Synch IA</h3><p>Texto e voz liberados neste plano, sem limite de mensagens.</p></div></div></section>}<section className="app-plan-grid single"><article className={`surface app-plan-card ${subscribed ? "current" : ""}`}><div><small>{subscribed ? "PLANO ATUAL" : "DISPONÍVEL"}</small><h3>{synchIa.name}</h3><p>{synchIa.description}</p><strong>{synchIa.price}<span>{synchIa.period}</span></strong><p className="app-plan-installments">ou 12x de <strong>{synchIa.installments}</strong></p></div><ul>{synchIa.features.map((feature) => <li key={feature}><Check />{feature}</li>)}</ul><Button className="primary-button" disabled={subscribed} onClick={upgrade}>{subscribed ? "Plano atual" : `Assinar ${synchIa.name}`}</Button></article></section><section className="account-billing-grid"><article className="surface billing-security"><CreditCard /><h3>Pagamento protegido pela Cakto</h3><p>Os dados do cartão não ficam armazenados no Synch Cash. O plano é liberado assim que a Cakto confirma o pagamento.</p>{subscribed && <Button variant="outline" onClick={() => setCancelOpen(true)}>Cancelar assinatura</Button>}</article></section><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="transaction-dialog"><AlertDialogHeader><AlertDialogTitle>Cancelar assinatura?</AlertDialogTitle><AlertDialogDescription>O cancelamento é feito diretamente com a Cakto, a plataforma de pagamento.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Manter plano</AlertDialogCancel><AlertDialogAction className="delete-button" onClick={confirmCancel}>Ver instruções</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
+  return <div className="view-stack">
+    <section className="surface subscription-account-hero"><div><span>Plano atual</span><h2>{subscribed ? "Synch IA" : "Básico Vitalício"}</h2><p>{subscribed ? "Controle com inteligência" : "Controle essencial"}</p></div><div><small>Próxima cobrança</small><strong>{subscribed ? "Renovação anual" : "Sem cobrança"}</strong><span>{subscribed ? "R$ 149,90/ano" : "R$ 0"}</span></div></section>
+    {subscribed && <section className="surface usage-card"><div><span><Bot /></span><div><h3>Assistente Synch IA</h3><p>Texto e voz liberados neste plano, sem limite de mensagens.</p></div></div></section>}
+    <section className="app-plan-grid">
+      <PlanCard tone="basic" badge={subscribed ? "SEM CUSTO" : "PLANO ATUAL"} icon={Wallet}
+        eyebrow="Para começar no controle financeiro" name="Básico Vitalício"
+        description="O essencial para organizar suas finanças, sem custo e sem prazo para acabar."
+        price="R$ 0" period="para sempre"
+        features={["1 conta bancária e 1 cartão de crédito", "Até 100 movimentações por mês", "1 meta financeira", "Painel, categorias e orçamento das categorias existentes", "Relatórios e calendário financeiro"]}
+      />
+      <PlanCard tone="complete" badge={subscribed ? "PLANO ATUAL" : "PLANO COMPLETO"} icon={Sparkles}
+        eyebrow="Inteligência para seu dinheiro" name="Synch IA"
+        description="Controle financeiro completo com assistência inteligente."
+        quote="Ideal para quem quer organizar, entender e planejar melhor o próprio dinheiro."
+        price="R$ 149,90" period="por ano" monthly="equivale a R$ 12,49 por mês"
+        features={["Contas e cartões ilimitados", "Parcelas, recorrências e importação", "Orçamentos, metas e relatórios completos", "Assistente por texto e voz", "Análises, previsões e simulações com IA", "Resumo semanal inteligente"]}
+        cta={<Button className="primary-button plan-card-cta" disabled={subscribed} onClick={upgrade}>{subscribed ? "Plano atual" : <>Assinar Synch IA anual <ArrowRight /></>}</Button>}
+        note="Cobrança anual de R$ 149,90 na Cakto"
+      />
+    </section>
+    <section className="account-billing-grid"><article className="surface billing-security"><CreditCard /><h3>Pagamento protegido pela Cakto</h3><p>Os dados do cartão não ficam armazenados no Synch Cash. O plano é liberado assim que a Cakto confirma o pagamento.</p>{subscribed && <Button variant="outline" onClick={() => setCancelOpen(true)}>Cancelar assinatura</Button>}</article></section>
+    <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="transaction-dialog"><AlertDialogHeader><AlertDialogTitle>Cancelar assinatura?</AlertDialogTitle><AlertDialogDescription>O cancelamento é feito diretamente com a Cakto, a plataforma de pagamento.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Manter plano</AlertDialogCancel><AlertDialogAction className="delete-button" onClick={confirmCancel}>Ver instruções</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+  </div>
 }
 
 export function ImportReviewDialog({ open, setOpen, drafts, confirm }: { open: boolean; setOpen: (open: boolean) => void; drafts: Transaction[]; confirm: (selected: Transaction[]) => void }) {

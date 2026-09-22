@@ -34,7 +34,9 @@ const empty: SynchData = {
 // mutacao (criar transacao, pagar fatura, etc.) e seguida de um refresh --
 // nunca aplicamos o efeito localmente por cima, pra nao duplicar calculo que
 // o servidor ja fez (ver docs/BACKEND_INTEGRATION.md do design original).
-export function useSynchData() {
+// `onPlanLimit` é chamado quando o servidor recusa uma ação por causa do plano (403 PLAN_LIMIT) --
+// o app leva o usuário pra tela de assinatura, com o motivo exato já explicado no toast.
+export function useSynchData(onPlanLimit?: () => void) {
   const [status, setStatus] = useState<AuthStatus>("loading")
   const [data, setData] = useState<SynchData>(empty)
   const loadingRef = useRef(false)
@@ -85,9 +87,10 @@ export function useSynchData() {
         return null
       }
       toast.error(error instanceof Error ? error.message : "Não foi possível concluir a ação.")
+      if (error instanceof SynchApiError && error.code === "PLAN_LIMIT") onPlanLimit?.()
       return null
     }
-  }, [refresh])
+  }, [refresh, onPlanLimit])
 
   return {
     status,
