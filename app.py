@@ -34,18 +34,20 @@ CAKTO_PLANOS = {
 }
 CAKTO_OFERTA_PARA_PLANO = {
     "syw8q2x": "synch_ia",
-    "psh8aeu_1097259": "synch_ia",
 }
 
-# Acesso vitalicio Basico: taxa unica (nao e assinatura, nao e o Synch IA) que passou a ser
-# exigida pra criar conta -- ver _cadastro_autorizado. Os ids de oferta reais (como aparecem
-# em data.offer.id no webhook da Cakto -- confira num pagamento de teste ou no painel da Cakto)
-# ainda faltam ser configurados; sem eles a exigencia fica DESLIGADA (ninguem e bloqueado) pra
-# nao travar cadastro por engano num ambiente sem essa variavel.
+# Acesso vitalicio Basico: taxa unica (nao e assinatura, nao e o Synch IA) exigida pra criar
+# conta -- ver _cadastro_autorizado. "psh8aeu" e o data.offer.id real, confirmado num pagamento
+# de teste (o data.checkout, "1097259", e o produto/funil, nao a oferta -- a URL de checkout
+# concatena os dois com "_", mas so o offer.id entra na comparacao aqui).
+#
+# Nota: antes desta correcao, "psh8aeu_1097259" (a URL inteira, nao o offer.id) estava na
+# CAKTO_OFERTA_PARA_PLANO acima como se desse Synch IA -- nunca bateu com nenhum webhook real
+# (nenhum offer.id vem com esse sufixo), entao nao tinha ninguem "presa" nessa oferta.
 CAKTO_OFERTA_BASICO_VITALICIO = {
-    id.strip() for id in os.getenv("CAKTO_OFERTAS_BASICO_VITALICIO", "").split(",") if id.strip()
+    id.strip() for id in os.getenv("CAKTO_OFERTAS_BASICO_VITALICIO", "psh8aeu").split(",") if id.strip()
 }
-CAKTO_CHECKOUT_BASICO_VITALICIO = os.getenv("CAKTO_CHECKOUT_BASICO_VITALICIO")  # ex.: "https://pay.cakto.com.br/xxxxx"
+CAKTO_CHECKOUT_BASICO_VITALICIO = os.getenv("CAKTO_CHECKOUT_BASICO_VITALICIO", "https://pay.cakto.com.br/psh8aeu_1097259")
 
 PLANOS_ORDEM = {"gratis": 0, "synch_ia": 1}
 CAKTO_EVENTOS_ATIVA = {
