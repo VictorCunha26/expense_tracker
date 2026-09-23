@@ -318,8 +318,11 @@ button { cursor: pointer; }
 .voice-feature-card svg { width: 20px; }.voice-feature-card small, .voice-feature-card strong, .voice-feature-card p { display: block; }
 .voice-feature-card small { color: #36c966; font-size: 7px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; }.voice-feature-card strong { margin-top: 2px; color: #e1e7e3; font-size: 12px; }.voice-feature-card p { margin: 3px 0 0; color: #66716a; font-size: 8px; }
 .voice-feature-card > button { padding: 7px 9px; border: 1px solid #2a6d3e; border-radius: 8px; background: #102e1a; color: #48dd77; font-size: 8px; font-weight: 650; }.voice-feature-card > button:hover { background: #153b22; }.voice-feature-card > button:disabled { opacity: .42; cursor: not-allowed; }
-.chat-input .voice-button { border: 1px solid #2b4934; background: #0d1911; color: #43d673; transition: .16s ease; }
-.chat-input .voice-button:hover { border-color: #347a49; background: #10291a; }.chat-input .voice-button.active { border-color: #db3e49; background: #341216; color: #ff6d76; box-shadow: 0 0 0 4px #db3e4912, 0 0 28px #db3e4924; }
+.chat-input .voice-button { display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 1px solid #2b4934; background: radial-gradient(circle at 30% 22%, #163a22, #0d1911 70%); color: #43d673; transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease; }
+.chat-input .voice-button svg { width: 19px; }
+.chat-input .voice-button:hover { border-color: #347a49; background: radial-gradient(circle at 30% 22%, #1c4a2b, #10291a 70%); transform: translateY(-1px); }
+.chat-input .voice-button:active { transform: translateY(0) scale(.93); }
+.chat-input .voice-button.active { border-color: #db3e49; background: radial-gradient(circle at 30% 22%, #4a1a20, #341216 70%); color: #ff6d76; box-shadow: 0 0 0 4px #db3e4912, 0 0 28px #db3e4924; }
 .voice-capture { width: min(500px, 94%); padding: 15px; border: 1px solid #2b4e35; border-radius: 14px; background: linear-gradient(145deg, #0b1710, #09100c); box-shadow: 0 18px 48px #0005; }
 .voice-capture.is-listening { border-color: #2e7b45; box-shadow: 0 0 0 4px #20bd5010, 0 18px 48px #0005; }
 .voice-capture-top { display: flex; align-items: center; gap: 11px; }.voice-capture-top > div { flex: 1; }.voice-capture-top strong, .voice-capture-top small { display: block; }.voice-capture-top strong { color: #e1e7e3; font-size: 11px; }.voice-capture-top small { margin-top: 3px; color: #69746d; font-size: 8px; }

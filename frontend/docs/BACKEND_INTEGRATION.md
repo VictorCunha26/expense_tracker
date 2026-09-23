@@ -112,6 +112,16 @@ Quem paga na Cakto **antes** de ter conta no app (ou paga/cancela com outro e-ma
 
 Bug real já encontrado e corrigido: antes de existir a coluna `plano`, o controle de acesso era só um booleano `ativa` (versão antiga do webhook). Quando `plano` foi criada, `alter table ... add column if not exists plano ... default 'gratis'` sobrescreveu quem já era assinante ativo antes da migração — a pessoa continuava com `cakto_evento` de compra/renovação, mas o plano virava `gratis` e nunca mais era corrigido (a Cakto não reenvia o evento original). `supabase_schema.sql` agora tem um `update` idempotente que reaplica `synch_ia` para toda linha com `plano = 'gratis'` e `cakto_evento` de um evento ativo — roda a cada migração, sem efeito depois de corrigida uma vez. Ao investigar isso na conta do próprio dono do produto, achamos e corrigimos 2 contas reais afetadas.
 
+### Acesso vitalício Básico (taxa única, exigida para se cadastrar)
+
+Diferente do Synch IA (assinatura recorrente), o plano Básico Vitalício passou a exigir uma taxa única — cobrada num checkout Cakto separado — só para poder **criar conta**. Não é um upgrade de plano: quem paga continua no `plano: "gratis"`, só ganha o direito de se cadastrar com aquele e-mail.
+
+- `CAKTO_OFERTAS_BASICO_VITALICIO` (env, lista separada por vírgula) tem os `id`s de oferta desse checkout, como aparecem em `data.offer.id` no webhook da Cakto — **ainda não configurados**; confirme num pagamento de teste ou no painel da Cakto. Sem essa variável, a exigência fica **desligada** (todo cadastro é livre, como antes), de propósito, para nunca travar cadastro num ambiente que ainda não tem a oferta real configurada.
+- `CAKTO_CHECKOUT_BASICO_VITALICIO` (env, opcional) é a URL do checkout, devolvida em `checkoutUrl` no erro `402 PAYMENT_REQUIRED` de `POST /v1/auth/register`; o front usa isso para oferecer um botão "Pagar acesso" direto na notificação de erro.
+- Webhook: uma compra aprovada para essa oferta grava a autorização em `cakto_pendencias` (mesma tabela do Synch IA, reaproveitada) só se a conta ainda não existir; se já existir, não faz nada (quem já tem conta continua normalmente, sem qualquer exigência retroativa). Reembolso/chargeback antes de existir conta revoga essa autorização.
+- `POST /v1/auth/register` recusa com `402 PAYMENT_REQUIRED` qualquer e-mail sem uma linha correspondente em `cakto_pendencias`, antes até de chamar o Supabase Auth (evita criar usuário/disparar e-mail de confirmação para quem não pagou). A autorização é **consumida** (apagada) no primeiro cadastro bem-sucedido, então o mesmo pagamento não serve para criar uma segunda conta depois.
+- Contas já existentes antes desse recurso não são afetadas: a exigência vale só para cadastros novos.
+
 ## Arquivos e funcionamento offline
 
 O nome do comprovante é salvo localmente apenas para demonstrar o fluxo. O arquivo real deve ser enviado a armazenamento privado, com URL temporária autorizada pelo backend. O service worker só armazena logo, favicon e manifesto. Não armazena HTML, dados da API, autenticação ou pagamento. Sincronização, fila offline e resolução de conflitos ainda não estão implementadas.

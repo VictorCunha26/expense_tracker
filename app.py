@@ -36,6 +36,17 @@ CAKTO_OFERTA_PARA_PLANO = {
     "syw8q2x": "synch_ia",
     "psh8aeu_1097259": "synch_ia",
 }
+
+# Acesso vitalicio Basico: taxa unica (nao e assinatura, nao e o Synch IA) que passou a ser
+# exigida pra criar conta -- ver _cadastro_autorizado. Os ids de oferta reais (como aparecem
+# em data.offer.id no webhook da Cakto -- confira num pagamento de teste ou no painel da Cakto)
+# ainda faltam ser configurados; sem eles a exigencia fica DESLIGADA (ninguem e bloqueado) pra
+# nao travar cadastro por engano num ambiente sem essa variavel.
+CAKTO_OFERTA_BASICO_VITALICIO = {
+    id.strip() for id in os.getenv("CAKTO_OFERTAS_BASICO_VITALICIO", "").split(",") if id.strip()
+}
+CAKTO_CHECKOUT_BASICO_VITALICIO = os.getenv("CAKTO_CHECKOUT_BASICO_VITALICIO")  # ex.: "https://pay.cakto.com.br/xxxxx"
+
 PLANOS_ORDEM = {"gratis": 0, "synch_ia": 1}
 CAKTO_EVENTOS_ATIVA = {
     "purchase_approved", "subscription_created",
@@ -836,6 +847,18 @@ def api_register():
     nome = (corpo.get("name") or "").strip()
     if not email or len(senha) < 6:
         return json_error("VALIDATION", "Informe e-mail e uma senha com pelo menos 6 caracteres.", 422)
+
+    # Cadastro exige ter pago o acesso vitalicio Basico com este e-mail (taxa unica, nao e
+    # o Synch IA). Quem ja pagou aparece em cakto_pendencias pelo webhook; sem isso, nao cria
+    # a conta -- e nem chega a chamar o Supabase Auth (que ja dispararia e-mail de confirmacao).
+    if not _cadastro_autorizado(email):
+        return json_error(
+            "PAYMENT_REQUIRED",
+            "Para criar uma conta é preciso pagar o acesso vitalício com este e-mail. "
+            "Assine o acesso e volte para se cadastrar com o mesmo e-mail usado na compra.",
+            402,
+            checkoutUrl=CAKTO_CHECKOUT_BASICO_VITALICIO,
+        )
 
     supabase = conectar()
     try:
@@ -1942,6 +1965,23 @@ def _aplicar_pendencia_cakto(admin, user_id, email):
         pass  # nao pode travar login/cadastro por causa disso -- o webhook tenta de novo no proximo evento
 
 
+def _cadastro_autorizado(email):
+    """Cadastro so e permitido pra quem pagou o acesso vitalicio Basico com esse
+    e-mail (o webhook grava isso em cakto_pendencias -- ver webhook_cakto). Sem
+    nenhuma oferta configurada (CAKTO_OFERTAS_BASICO_VITALICIO vazia), a exigencia
+    fica desligada e todo cadastro e permitido, como era antes desse recurso."""
+    if not CAKTO_OFERTA_BASICO_VITALICIO:
+        return True
+    admin = conectar_admin()
+    if admin is None:
+        return False  # sem como confirmar o pagamento agora -- mais seguro negar do que deixar passar
+    try:
+        pendencias = admin.table("cakto_pendencias").select("email").eq("email", _chave_email(email)).execute().data
+    except Exception:
+        return False
+    return bool(pendencias)
+
+
 def _achar_usuario_por_email(admin, email):
     """Nao tem 'buscar por e-mail' no client do Supabase -- so listar
     paginado. Pro tamanho deste app isso e suficiente."""
@@ -1979,18 +2019,35 @@ def webhook_cakto():
     if evento not in (CAKTO_EVENTOS_ATIVA | CAKTO_EVENTOS_INATIVA):
         return "", 200  # evento que nao muda nada aqui (ex.: pix_gerado)
 
+    oferta_id = (dados.get("offer") or {}).get("id")
+    email = _chave_email((dados.get("customer") or {}).get("email"))
+    admin = conectar_admin()
+    if not email or admin is None:
+        return "", 200
+
+    if oferta_id in CAKTO_OFERTA_BASICO_VITALICIO:
+        # Acesso vitalicio Basico (taxa unica): so autoriza CADASTRO por esse e-mail
+        # (ver _cadastro_autorizado). Nunca muda o plano de quem ja tem conta -- essa
+        # oferta nao e o Synch IA, e quem ja se cadastrou nao precisa de nada daqui.
+        usuario = _achar_usuario_por_email(admin, email)
+        if not usuario:
+            if evento in CAKTO_EVENTOS_ATIVA:
+                admin.table("cakto_pendencias").upsert({
+                    "email": email, "plano": "gratis",
+                    "cakto_evento": evento, "cakto_id": dados.get("id"),
+                    "atualizada_em": datetime.utcnow().isoformat(),
+                }).execute()
+            else:
+                # Reembolso/chargeback antes de criar a conta: revoga a autorizacao pendente.
+                admin.table("cakto_pendencias").delete().eq("email", email).execute()
+        return "", 200
+
     if evento in CAKTO_EVENTOS_ATIVA:
-        oferta_id = (dados.get("offer") or {}).get("id")
         plano = CAKTO_OFERTA_PARA_PLANO.get(oferta_id)
         if not plano:
             return "", 200
     else:
         plano = "gratis"
-
-    email = ((dados.get("customer") or {}).get("email") or "").strip().lower()
-    admin = conectar_admin()
-    if not email or admin is None:
-        return "", 200
 
     usuario = _achar_usuario_por_email(admin, email)
     if not usuario:

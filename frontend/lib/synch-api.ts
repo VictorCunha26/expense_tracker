@@ -15,7 +15,7 @@ export const backendConfig = {
 } as const
 
 export class SynchApiError extends Error {
-  constructor(public status: number, message: string, public code = "API_ERROR", public requestId?: string) {
+  constructor(public status: number, message: string, public code = "API_ERROR", public requestId?: string, public checkoutUrl?: string) {
     super(message)
     this.name = "SynchApiError"
   }
@@ -42,9 +42,9 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers,
     })
     if (!response.ok) {
-      const body = await response.json().catch(() => null) as { message?: string; code?: string } | null
+      const body = await response.json().catch(() => null) as { message?: string; code?: string; checkoutUrl?: string } | null
       const fallback = response.status === 401 ? "Sua sessão expirou. Entre novamente." : response.status === 409 ? "Os dados foram atualizados. Recarregue antes de continuar." : response.status === 429 ? "Muitas solicitações. Aguarde antes de tentar novamente." : "Não foi possível concluir a solicitação."
-      throw new SynchApiError(response.status, body?.message || fallback, body?.code, response.headers.get("X-Request-Id") || undefined)
+      throw new SynchApiError(response.status, body?.message || fallback, body?.code, response.headers.get("X-Request-Id") || undefined, body?.checkoutUrl)
     }
     if (response.status === 204) return undefined as T
     try { return await response.json() as T } catch { throw new SynchApiError(response.status, "A API devolveu uma resposta inválida.", "INVALID_RESPONSE") }

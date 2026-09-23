@@ -203,10 +203,15 @@ update public.assinaturas
  where plano = 'gratis'
    and cakto_evento in ('purchase_approved', 'subscription_created', 'subscription_renewed', 'subscription_resumed');
 
--- Quem paga na Cakto ANTES de criar conta no app: o webhook nao acha ninguem
--- pra marcar em "assinaturas" (nao existe user_id ainda) e, sem isso, o
--- pagamento seria esquecido pra sempre. Guarda o estado por e-mail aqui; ao
--- criar a conta ou entrar com esse e-mail, o backend aplica e limpa a linha.
+-- Duplo uso, ambos escritos so pelo webhook (service_role):
+-- 1) Quem paga o Synch IA na Cakto ANTES de criar conta no app: o webhook nao acha
+--    ninguem pra marcar em "assinaturas" (nao existe user_id ainda) e, sem isso, o
+--    pagamento seria esquecido pra sempre. Guarda o estado por e-mail aqui; ao criar
+--    a conta ou entrar com esse e-mail, o backend aplica em "assinaturas" e limpa a linha.
+-- 2) Acesso vitalicio Basico (taxa unica, ver _cadastro_autorizado em app.py): uma
+--    linha aqui e a UNICA coisa que autoriza criar conta com esse e-mail. E consumida
+--    (apagada) no primeiro cadastro bem-sucedido, entao um pagamento nao serve pra
+--    criar uma segunda conta depois.
 -- RLS fica ligado e SEM NENHUMA policy: só a service_role (webhook e o
 -- proprio backend, via conectar_admin) le e escreve; nenhum usuario logado
 -- pode ver o e-mail ou o plano de outra pessoa aqui.

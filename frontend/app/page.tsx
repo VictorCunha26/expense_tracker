@@ -690,7 +690,14 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: () => Promise<void>
         toast.success("Bem-vindo de volta!")
       }
     } catch (error) {
-      toast.error(error instanceof SynchApiError ? error.message : "Não foi possível concluir.")
+      const mensagem = error instanceof SynchApiError ? error.message : "Não foi possível concluir."
+      // Cadastro sem o pagamento do acesso vitalício: a mensagem já explica o motivo; se a API mandou
+      // o link de checkout, a Toast ganha um botão pra ir pagar direto, sem precisar sair e procurar.
+      if (error instanceof SynchApiError && error.code === "PAYMENT_REQUIRED" && error.checkoutUrl) {
+        toast.error(mensagem, { action: { label: "Pagar acesso", onClick: () => window.open(error.checkoutUrl, "_blank", "noopener,noreferrer") } })
+      } else {
+        toast.error(mensagem)
+      }
     } finally {
       setLoading(false)
     }
