@@ -18,9 +18,12 @@ from datetime import date
 import openai
 
 # O Gemini tem plano gratuito e aceita o formato de API da OpenAI; trocar
-# SYNCH_IA_BASE_URL/SYNCH_IA_MODELO aponta para outro provedor compativel.
+# SYNCH_IA_BASE_URL/SYNCH_IA_MODELOS aponta para outro provedor compativel.
 BASE_URL = os.getenv("SYNCH_IA_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
-MODELO = os.getenv("SYNCH_IA_MODELO", "gemini-3.8-flash")
+# Em ordem de preferencia: o flash-lite e o mais estavel no plano gratuito.
+# Os maiores vivem sobrecarregados (503) ou com a cota do dia esgotada
+# (429); nesses casos a conversa segue no proximo da lista.
+MODELOS = [m.strip() for m in os.getenv("SYNCH_IA_MODELOS", "gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.5-flash").split(",") if m.strip()]
 RACIOCINIO = os.getenv("SYNCH_IA_RACIOCINIO", "low")
 MAX_RODADAS = 6
 MAX_HISTORICO = 20
@@ -543,28 +546,36 @@ def _obter_cliente():
         chave = os.getenv("GEMINI_API_KEY") or os.getenv("SYNCH_IA_API_KEY")
         if not chave:
             raise IAIndisponivel("A Synch IA ainda não foi configurada no servidor.")
-        _cliente = openai.OpenAI(api_key=chave, base_url=BASE_URL, timeout=60.0, max_retries=2)
+        _cliente = openai.OpenAI(api_key=chave, base_url=BASE_URL, timeout=30.0, max_retries=2)
     return _cliente
 
 
-def _chamar_modelo(mensagens):
+def _chamar_modelo(mensagens, modelos):
+    """Tenta cada modelo ate um responder. Devolve (resposta, modelos a partir
+    do que respondeu), para as proximas rodadas da mesma conversa ficarem nele."""
     extra = {"reasoning_effort": RACIOCINIO} if RACIOCINIO else {}
-    try:
-        return _obter_cliente().chat.completions.create(
-            model=MODELO, messages=mensagens, tools=FUNCOES, tool_choice="auto", **extra,
-        )
-    except openai.RateLimitError:
-        log.warning("Limite de uso da API de IA atingido")
+    limite_estourado = False
+    for i, modelo in enumerate(modelos):
+        ultimo = i == len(modelos) - 1
+        try:
+            resposta = _obter_cliente().with_options(max_retries=1 if ultimo else 0).chat.completions.create(
+                model=modelo, messages=mensagens, tools=FUNCOES, tool_choice="auto", **extra,
+            )
+            return resposta, modelos[i:]
+        except openai.RateLimitError:
+            log.warning("Modelo %s sem cota disponível", modelo)
+            limite_estourado = True
+        except (openai.AuthenticationError, openai.PermissionDeniedError):
+            log.exception("Chave da API de IA recusada")
+            raise IAIndisponivel("A Synch IA está indisponível por um problema de configuração no servidor.")
+        except (openai.InternalServerError, openai.NotFoundError, openai.APIConnectionError) as e:
+            log.warning("Modelo %s indisponível: %s", modelo, str(e)[:200])
+        except openai.APIStatusError as e:
+            log.exception("Erro da API de IA (%s) no modelo %s", e.status_code, modelo)
+            raise IAIndisponivel("A Synch IA não conseguiu responder agora. Tente novamente em instantes.")
+    if limite_estourado:
         raise IAIndisponivel("A Synch IA atingiu o limite de uso gratuito por agora. Tente de novo em alguns minutos.")
-    except (openai.AuthenticationError, openai.PermissionDeniedError):
-        log.exception("Chave da API de IA recusada")
-        raise IAIndisponivel("A Synch IA está indisponível por um problema de configuração no servidor.")
-    except openai.APIStatusError as e:
-        log.exception("Erro da API de IA (%s)", e.status_code)
-        raise IAIndisponivel("A Synch IA não conseguiu responder agora. Tente novamente em instantes.")
-    except openai.APIConnectionError:
-        log.exception("Sem conexão com a API de IA")
-        raise IAIndisponivel("A Synch IA não conseguiu responder agora. Tente novamente em instantes.")
+    raise IAIndisponivel("A Synch IA não conseguiu responder agora. Tente novamente em instantes.")
 
 
 def _executar(nome, argumentos, dados, estado, proposta):
@@ -599,10 +610,10 @@ def responder(mensagem, historico, dados, estado):
     Devolve {"answer": texto, "action": proposta|None, "decision": None|"confirm"|"cancel"|"undo"}.
     """
     mensagens = [{"role": "system", "content": INSTRUCOES + "\n\n" + _contexto(dados, estado)}] + _mensagens(historico, mensagem)
-    proposta = None
+    proposta, modelos = None, MODELOS
 
     for _ in range(MAX_RODADAS):
-        resposta = _chamar_modelo(mensagens)
+        resposta, modelos = _chamar_modelo(mensagens, modelos)
         escolha = resposta.choices[0]
         if escolha.finish_reason == "content_filter":
             return {"answer": "Não posso ajudar com esse pedido. Se quiser, posso analisar seus gastos, contas ou metas.", "action": None, "decision": None}
