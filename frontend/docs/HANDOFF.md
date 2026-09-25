@@ -50,13 +50,13 @@ Os nomes dos componentes são pontos de busca; não há necessidade de preservar
 - Contas comuns têm saldos editáveis; lançamentos normais e transferências ainda não constituem um livro-caixa bancário conciliado. Definir saldo inicial + movimentos no servidor e retornar saldo autoritativo.
 - Transferências locais criam um par demonstrativo. Edição/exclusão de pares e conciliação de contas precisam do serviço transacional.
 - Preferências/metas/recorrências usam chaves locais separadas; operações que atravessam módulos não são transações de banco de dados.
-- A IA atual usa regras, voz e reconhecimento do navegador; não é modelo externo. Indicadores locais de confiança são heurísticas, não garantias.
+- A Synch IA roda no Gemini (Google, plano gratuito) pelo backend (`synch_ia.py`, rota `/api/v1/assistant/messages`), usando a API compatível com OpenAI; exige `GEMINI_API_KEY` no ambiente do Flask. `SYNCH_IA_MODELO` troca o modelo e `SYNCH_IA_BASE_URL` + `SYNCH_IA_API_KEY` apontam para outro provedor compatível. No plano gratuito o Google pode usar o conteúdo enviado para melhorar os produtos dele. A voz continua usando o reconhecimento e a síntese do navegador. A IA só propõe ações: nada é gravado sem a confirmação do usuário no card. O percentual de confiança é a autoavaliação do modelo, não uma garantia.
 - Recorrências não possuem execução agendada no servidor; notificações, resumo semanal e compartilhamento familiar não estão automatizados.
 - O arquivo do comprovante não é persistido: apenas seu nome.
 - Importação CSV/OFX é uma interpretação local com revisão; validar os formatos reais dos bancos e deduplicação no servidor.
 - Plano e limites locais são demonstração. Webhook, cancelamento, consumo e bloqueios por plano precisam de validação do backend.
 - Confirmar domínio/e-mail de suporte, preços, periodicidade e links Cakto antes de publicar para clientes.
-- Sem chaves OpenAI, gateway, banco ou segredos no ZIP. Nunca colocar segredos em NEXT_PUBLIC_*.
+- Sem chaves de IA, gateway, banco ou segredos no ZIP. Nunca colocar segredos em NEXT_PUBLIC_*.
 - Configuração de CORS, cookies, CSRF e autorização depende da implantação escolhida. Validar no backend; não desabilitar proteções para contornar erros.
 - A validação visual final de celular e os fluxos conectados dependem de testes posteriores. Não foi feita homologação com uma API real nesta entrega.
 

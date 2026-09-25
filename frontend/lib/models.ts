@@ -61,6 +61,24 @@ export type GoalData = { id: number; name: string; saved: number; target: number
 export type RecurringData = { id: number; name: string; category: string; amount: number; type: "expense" | "income"; next: string; active: boolean; day?: number }
 export type Preferences = { name: string; email: string; notifications: boolean; weekly: boolean }
 
+export type AssistantProposal =
+  | { kind: "transactions"; confidence: number; drafts: Array<{ description: string; amount: number; type: "expense" | "income"; category: string; date: string; account: string; status: "paid" | "pending"; installments: number; recurring: boolean }> }
+  | { kind: "budget"; confidence: number; category: string; amount: number }
+  | { kind: "goal"; confidence: number; name: string; amount: number; deadline?: string }
+  | { kind: "recurring"; confidence: number; name: string; category: string; amount: number; type: "expense" | "income"; day: number }
+
+export type AssistantRequest = {
+  message: string
+  history: Array<{ role: "user" | "assistant"; text: string }>
+  source: "text" | "voice"
+  month: string
+  hidden: boolean
+  pendingAction: object | null
+  lastUndo: string | null
+}
+
+export type AssistantReply = { conversationId: string; answer: string; action: AssistantProposal | null; decision: "confirm" | "cancel" | "undo" | null }
+
 export type SynchBootstrap = {
   transactions: Transaction[]
   accounts: Account[]

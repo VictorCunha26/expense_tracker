@@ -1,4 +1,4 @@
-import type { Account, GoalData, InvoiceAdjustment, InvoicePayment, Preferences, RecurringData, SynchBootstrap, Transaction } from "./models"
+import type { Account, AssistantReply, AssistantRequest, GoalData, InvoiceAdjustment, InvoicePayment, Preferences, RecurringData, SynchBootstrap, Transaction } from "./models"
 
 // Sem NEXT_PUBLIC_API_URL definida, o cliente assume a MESMA origem: em
 // producao a Vercel roteia /api/* pro Flask, entao um caminho relativo
@@ -21,7 +21,7 @@ export class SynchApiError extends Error {
   }
 }
 
-export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit, timeoutMs = 30_000): Promise<T> {
   if (!/^\/v1\//.test(path)) throw new SynchApiError(0, "Caminho de API inválido.", "INVALID_PATH")
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData
   const headers = new Headers(init?.headers)
@@ -32,7 +32,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   init?.signal?.addEventListener("abort", abort, { once: true })
   if (init?.signal?.aborted) abort()
   let timedOut = false
-  const timer = setTimeout(() => { timedOut = true; controller.abort() }, 30_000)
+  const timer = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMs)
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
@@ -121,5 +121,6 @@ export const synchApi = {
   getSubscription: () => request<{ plan: "gratis" | "synch_ia"; planName: string; status: string; renewalAt?: string; checkoutUrl?: string }>("/v1/billing/subscription"),
   cancelSubscription: () => request<{ message: string }>("/v1/billing/subscription/cancel", { method: "POST" }),
 
-  sendAssistantMessage: (message: string, conversationId?: string) => request<{ conversationId: string; answer: string }>("/v1/assistant/messages", { method: "POST", body: JSON.stringify({ message, conversationId }) }),
+  // A IA pode consultar os dados em várias rodadas antes de responder, então espera mais que o padrão.
+  sendAssistantMessage: (body: AssistantRequest) => request<AssistantReply>("/v1/assistant/messages", { method: "POST", body: JSON.stringify(body) }, 120_000),
 }

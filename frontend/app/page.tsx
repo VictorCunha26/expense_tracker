@@ -36,7 +36,7 @@ import { synchApi, SynchApiError, type NewTransaction } from "@/lib/synch-api"
 import { CategoriesContext, categoryColor, systemCategories, useCategories } from "@/lib/categories"
 import { useSynchData, type Plan } from "@/lib/use-synch-data"
 import { cardCycles, cash, cents, invoice, isAnalytical, purchaseCycle, shiftMonth } from "@/lib/invoice-ledger"
-import type { Account, GoalData, LocalLedger, Preferences, RecurringData, Transaction, ViewKey } from "@/lib/models"
+import type { Account, AssistantProposal, GoalData, LocalLedger, Preferences, RecurringData, Transaction, ViewKey } from "@/lib/models"
 
 type MonthKey = string
 type FormState = { description: string; category: string; date: string; amount: string; type: "expense" | "income"; account: string; status: "paid" | "pending"; notes: string; installments: string; recurring: boolean; mode: "transaction" | "transfer"; transferAccount: string; splitEnabled: boolean; splitCategory: string; splitAmount: string; receiptName: string }
@@ -46,8 +46,8 @@ type AssistantActivity = { id: number; label: string; detail: string; time: stri
 type AssistantAction =
   | { id: number; kind: "transactions"; source: string; confidence: number; drafts: VoiceDraft[] }
   | { id: number; kind: "budget"; source: string; confidence: number; category: string; amount: number }
-  | { id: number; kind: "goal"; source: string; confidence: number; name: string; amount: number }
-  | { id: number; kind: "recurring"; source: string; confidence: number; name: string; category: string; amount: number }
+  | { id: number; kind: "goal"; source: string; confidence: number; name: string; amount: number; deadline?: string }
+  | { id: number; kind: "recurring"; source: string; confidence: number; name: string; category: string; amount: number; type?: "expense" | "income"; day?: number }
 type AssistantUndo =
   | { kind: "transactions"; label: string; transactionIds: number[]; recurringIds: number[] }
   | { kind: "budget"; label: string; category: string; previous?: number }
@@ -111,9 +111,6 @@ const seedBudgets: Record<string, number> = { Moradia: 1600, Alimentação: 1100
 const defaultForm: FormState = { description: "", category: "Alimentação", date: isoDate(currentDate), amount: "", type: "expense", account: "Banco Inter", status: "paid", notes: "", installments: "1", recurring: false, mode: "transaction", transferAccount: "Nubank", splitEnabled: false, splitCategory: "Outros", splitAmount: "", receiptName: "" }
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 const shortDate = (value: string) => value === isoDate(currentDate) ? "Hoje" : new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(new Date(`${value}T12:00:00`)).replace(".", "")
-const accountDetail = (account: Account) => account.type === "Cartão de crédito"
-  ? [`Final ${account.lastFour || "não informado"}`, account.closingDay ? `Fecha dia ${account.closingDay}` : null, account.dueDay ? `Vence dia ${account.dueDay}` : null].filter(Boolean).join(" • ")
-  : [account.detail, account.lastFour ? `Final ${account.lastFour}` : null].filter(Boolean).join(" • ")
 const subscribeAuth = (callback: () => void) => { window.addEventListener("synch-cash-auth-change", callback); window.addEventListener("storage", callback); return () => { window.removeEventListener("synch-cash-auth-change", callback); window.removeEventListener("storage", callback) } }
 const getAuthSnapshot = () => localStorage.getItem("synch-cash-auth") === "active" || sessionStorage.getItem("synch-cash-auth") === "active"
 const getClientSnapshot = () => true
@@ -132,16 +129,19 @@ function useMotionEffects(view: ViewKey, month: MonthKey) {
   }, [view, month])
 }
 
-function useStoredState<T>(key: string, initial: T): [T, Dispatch<SetStateAction<T>>] {
+function useStoredState<T>(key: string, initial: T, normalize?: (stored: T) => T): [T, Dispatch<SetStateAction<T>>] {
   const [value, setValue] = useState<T>(() => {
     if (typeof window === "undefined") return initial
     const stored = localStorage.getItem(key)
     if (!stored) return initial
-    try { return JSON.parse(stored) as T } catch { return initial }
+    try { const parsed = JSON.parse(stored) as T; return normalize ? normalize(parsed) : parsed } catch { return initial }
   })
   useEffect(() => { localStorage.setItem(key, JSON.stringify(value)) }, [key, value])
   return [value, setValue]
 }
+
+// Históricos salvos antes da correção podem ter IDs repetidos; renumera só quando há repetição
+const withUniqueIds = <T extends { id: number }>(list: T[]): T[] => new Set(list.map((item) => item.id)).size === list.length ? list : list.map((item, index) => ({ ...item, id: index + 1 }))
 
 const navItems: { key: ViewKey; label: string; icon: typeof LayoutDashboard }[] = [
   { key: "overview", label: "Visão geral", icon: LayoutDashboard }, { key: "transactions", label: "Transações", icon: ArrowDownLeft },
@@ -313,54 +313,15 @@ const parseAssistantAmount = (text: string) => {
   })
   return found ? total + current : 0
 }
-const assistantDate = (text: string) => {
-  const normalized = normalizeSpeech(text), date = new Date()
-  if (normalized.includes("anteontem")) date.setDate(date.getDate() - 2)
-  else if (normalized.includes("ontem")) date.setDate(date.getDate() - 1)
-  else if (normalized.includes("amanha")) date.setDate(date.getDate() + 1)
-  const fullDate = normalized.match(/\b(\d{1,2})[\/]([01]?\d)(?:[\/](\d{2,4}))?\b/)
-  if (fullDate) { date.setDate(Number(fullDate[1])); date.setMonth(Number(fullDate[2]) - 1); if (fullDate[3]) date.setFullYear(Number(fullDate[3].length === 2 ? `20${fullDate[3]}` : fullDate[3])) }
-  else { const day = normalized.match(/\bdia\s+(\d{1,2})\b/); if (day) date.setDate(Number(day[1])) }
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
-}
-const assistantCategory = (text: string, type: "expense" | "income") => {
-  if (type === "income") return "Receita"
-  const normalized = normalizeSpeech(text)
-  if (/(mercado|supermercado|restaurante|delivery|ifood|lanche|comida|padaria|almoco|jantar)/.test(normalized)) return "Alimentação"
-  if (/(uber|\b99\b|combustivel|gasolina|posto|onibus|metro|transporte|estacionamento|pedagio)/.test(normalized)) return "Transporte"
-  if (/(aluguel|condominio|energia|luz|agua|casa|moradia)/.test(normalized)) return "Moradia"
-  if (/(netflix|spotify|internet|assinatura|celular|prime|disney|software)/.test(normalized)) return "Assinaturas"
-  if (/(cinema|academia|viagem|lazer|jogo|show|passeio)/.test(normalized)) return "Lazer"
-  return "Outros"
-}
-const assistantDescription = (text: string, type: "expense" | "income", category: string) => {
-  const normalized = normalizeSpeech(text)
-  const names: [RegExp, string][] = [[/supermercado/, "Supermercado"], [/mercado/, "Mercado"], [/restaurante|almoco|jantar/, "Restaurante"], [/ifood|delivery/, "Delivery"], [/netflix/, "Netflix"], [/spotify/, "Spotify"], [/academia/, "Academia"], [/aluguel/, "Aluguel"], [/uber/, "Uber"], [/gasolina|combustivel|posto/, "Combustível"], [/salario/, "Salário"], [/freelance/, "Freelance"], [/internet/, "Internet"], [/energia|luz/, "Energia"], [/farmacia|remedio/, "Farmácia"], [/cinema/, "Cinema"]]
-  return names.find(([pattern]) => pattern.test(normalized))?.[1] || (type === "income" ? "Receita" : category)
-}
-const inferAssistantDraft = (text: string, accountNames: string[]): VoiceDraft => {
-  const normalized = normalizeSpeech(text)
-  const type: "expense" | "income" = /(recebi|ganhei|entrou|entrada|salario|renda|freelance|pagamento recebido|vendi)/.test(normalized) ? "income" : "expense"
-  const category = assistantCategory(text, type)
-  const account = accountNames.find((name) => { const normalizedName = normalizeSpeech(name); return normalized.includes(normalizedName) || normalizedName.split(" ").some((part) => part.length > 3 && normalized.includes(part)) }) || accountNames[0] || "Carteira"
-  const installmentMatch = normalized.match(/(?:em\s+)?(\d+)\s*(?:x|vezes|parcelas)/)
-  const amount = parseAssistantAmount(text)
-  const explicitSignals = [amount > 0, category !== "Outros", accountNames.some((name) => normalized.includes(normalizeSpeech(name))), /(hoje|ontem|amanha|dia\s+\d)/.test(normalized)]
-  return { description: assistantDescription(text, type, category), amount: amount ? String(amount).replace(".", ",") : "", type, category, date: assistantDate(text), account, status: /(pendente|a pagar|vencimento|vence)/.test(normalized) ? "pending" : "paid", installments: installmentMatch ? Math.max(1, Number(installmentMatch[1])) : 1, recurring: /(recorrente|todo mes|mensal|assinatura fixa)/.test(normalized), confidence: 72 + explicitSignals.filter(Boolean).length * 6 }
-}
-const splitAssistantTransactions = (text: string) => normalizeSpeech(text).split(/\s+(?:e tambem|e depois|depois|e)\s+(?=(?:(?:gastei|paguei|comprei|recebi|ganhei|entrou)\s+)?(?:r\$\s*)?\d)/i).map((part) => part.trim()).filter(Boolean)
 // Uma frase por vez (com uma pausa curta entre elas) soa muito mais natural do que jogar o texto
 // inteiro pro navegador de uma vez: cada engine de voz tende a "achatar" a entonação num bloco só.
 const splitSentences = (text: string) => text.match(/[^.!?]+[.!?]*(?:\s+|$)/g)?.map((sentence) => sentence.trim()).filter(Boolean) || [text]
 
 function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, recurring, setRecurring, goals, setGoals, accounts, month, userName }: { items: Transaction[]; budgets: Record<string, number>; hidden: boolean; setItems: Dispatch<SetStateAction<Transaction[]>>; setBudgets: Dispatch<SetStateAction<Record<string, number>>>; recurring: RecurringData[]; setRecurring: Dispatch<SetStateAction<RecurringData[]>>; goals: GoalData[]; setGoals: Dispatch<SetStateAction<GoalData[]>>; accounts: Account[]; month: MonthKey; userName: string }) {
   const categories = useCategories()
-  // O assistente deduz categorias por palavras-chave com nomes fixos ("Alimentação", "Moradia"...); se a pessoa renomeou ou excluiu uma delas, cai em "Outros".
-  const knownCategory = (name: string) => categories.includes(name) ? name : "Outros"
-  const knownDraft = (draft: VoiceDraft): VoiceDraft => ({ ...draft, category: knownCategory(draft.category) })
   const firstName = userName.trim().split(/\s+/)[0] || "você", hour = new Date().getHours(), greeting = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite"
   const initialMessages: AssistantMessage[] = [{ id: 1, role: "assistant", text: `${greeting}, ${firstName}! Eu sou a Synch, sua assistente financeira. Pode conversar comigo naturalmente — eu posso explicar seus números, tirar dúvidas e preparar ações para você confirmar. Como posso ajudar agora?`, time: "Agora" }]
-  const [conversation, setConversation] = useStoredState<AssistantMessage[]>("synch-cash-assistant-history-v4", initialMessages)
+  const [conversation, setConversation] = useStoredState<AssistantMessage[]>("synch-cash-assistant-history-v4", initialMessages, withUniqueIds)
   const [message, setMessage] = useState(""), [pending, setPending] = useState<AssistantAction | null>(null), [processing, setProcessing] = useState(false)
   const [listening, setListening] = useState(false), [speaking, setSpeaking] = useState(false), [voiceSupported] = useState(() => { if (typeof window === "undefined") return false; const w = window as typeof window & { SpeechRecognition?: VoiceRecognitionConstructor; webkitSpeechRecognition?: VoiceRecognitionConstructor }; return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition) }), [voiceTranscript, setVoiceTranscript] = useState("")
   const [voiceConfidence, setVoiceConfidence] = useState<number | null>(null), [voiceError, setVoiceError] = useState("")
@@ -368,15 +329,14 @@ function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, rec
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>(() => typeof window === "undefined" ? [] : window.speechSynthesis?.getVoices() || [])
   const [lastUndo, setLastUndo] = useState<AssistantUndo | null>(null)
   const [panelOpen, setPanelOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 1000), [voiceMode, setVoiceMode] = useState(false), [voiceSeconds, setVoiceSeconds] = useState(0)
-  const [activity, setActivity] = useStoredState<AssistantActivity[]>("synch-cash-assistant-activity-v1", [])
-  const recognitionRef = useRef<VoiceRecognition | null>(null), utteranceRef = useRef<SpeechSynthesisUtterance | null>(null), messagesEndRef = useRef<HTMLDivElement | null>(null), idCounterRef = useRef(100000), speakTokenRef = useRef(0)
-  const nextId = () => { idCounterRef.current += 1; return idCounterRef.current }
+  const [activity, setActivity] = useStoredState<AssistantActivity[]>("synch-cash-assistant-activity-v1", [], withUniqueIds)
+  const recognitionRef = useRef<VoiceRecognition | null>(null), utteranceRef = useRef<SpeechSynthesisUtterance | null>(null), messagesEndRef = useRef<HTMLDivElement | null>(null), idCounterRef = useRef(0), speakTokenRef = useRef(0)
+  // O histórico fica salvo no navegador, então os IDs partem do relógio para não repetir os de sessões anteriores
+  const nextId = () => { idCounterRef.current = Math.max(idCounterRef.current + 1, Date.now()); return idCounterRef.current }
   const accountNames = accounts.map((account) => account.name)
   const currentItems = items.filter((item) => item.date.startsWith(month) && item.kind !== "transfer"), expenses = currentItems.filter((item) => item.type === "expense" && item.status === "paid"), incomes = currentItems.filter((item) => item.type === "income" && item.status === "paid")
   const spent = expenses.reduce((sum, item) => sum + item.amount, 0), income = incomes.reduce((sum, item) => sum + item.amount, 0), totalBudget = Object.values(budgets).reduce((sum, value) => sum + value, 0)
   const categoryTotals = expenses.reduce<Record<string, number>>((result, item) => ({ ...result, [item.category]: (result[item.category] || 0) + item.amount }), {}), top = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1])[0]
-  const previousDate = new Date(`${month}-01T12:00:00`); previousDate.setMonth(previousDate.getMonth() - 1); const previousKey = `${previousDate.getFullYear()}-${String(previousDate.getMonth() + 1).padStart(2, "0")}`
-  const previousSpent = items.filter((item) => item.date.startsWith(previousKey) && item.type === "expense" && item.status === "paid" && item.kind !== "transfer").reduce((sum, item) => sum + item.amount, 0)
   const formatValue = (value: number) => hidden ? "valor oculto" : money.format(value)
   const nowLabel = () => new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
   const speechReadyText = (text: string) => text
@@ -428,77 +388,24 @@ function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, rec
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }) }, [conversation, pending, processing, listening])
   useEffect(() => { if (!listening) return; const timer = window.setInterval(() => setVoiceSeconds((value) => value + 1), 1000); return () => window.clearInterval(timer) }, [listening])
 
-  const analyticalAnswer = (question: string) => {
-    const normalized = normalizeSpeech(question), pendingTransactions = currentItems.filter((item) => item.status === "pending"), pendingTotal = pendingTransactions.reduce((sum, item) => sum + item.amount, 0), balance = income - spent
-    const activeRecurring = recurring.filter((item) => item.active && item.type !== "income"), recurringTotal = activeRecurring.reduce((sum, item) => sum + item.amount, 0)
-    const specificCategory = categories.find((category) => category !== "Receita" && normalized.includes(normalizeSpeech(category)))
-    const largestExpense = [...expenses].sort((a, b) => b.amount - a.amount)[0], lastMovement = [...currentItems].sort((a, b) => b.date.localeCompare(a.date))[0]
-    const latestDay = Math.max(1, ...currentItems.map((item) => Number(item.date.slice(8)))), daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate(), projectedSpend = spent / latestDay * daysInMonth
-    if (/^(oi|ola|opa|e ai|bom dia|boa tarde|boa noite)(\b|[!.?,])/.test(normalized)) return `${greeting}, ${firstName}! Que bom falar com você. Estou por aqui para organizar suas finanças sem complicação. Quer consultar alguma conta, entender seus gastos ou registrar algo?`
-    if (/(tudo bem|como voce esta|como vai)/.test(normalized)) return `Tudo bem, ${firstName}! Obrigada por perguntar. E com você? Se quiser, podemos conversar normalmente ou olhar juntos alguma parte das suas finanças.`
-    if (/(obrigad|valeu|perfeito|entendi)/.test(normalized)) return `Por nada, ${firstName}! Fico feliz em ajudar. Pode continuar falando comigo quando quiser.`
-    if (/(nao funciona|nao entendeu|resposta errada|voce errou|esta errado)/.test(normalized)) return `Poxa, ${firstName}, sinto muito por isso. Quero corrigir com você. Me diga qual informação ficou errada ou repita o pedido com o nome da conta, valor ou período, e eu tento novamente.`
-    if (/(preocupad|ansioso|ansiedade|sem dinheiro|apertado|dificuldade)/.test(normalized)) return `Entendo, ${firstName}. Questões financeiras realmente podem pesar. Vamos olhar isso com calma e sem julgamento. Posso começar mostrando suas contas pendentes ou onde existe mais espaço para economizar.`
-    if (/(me ajuda|preciso de ajuda|por onde comec)/.test(normalized)) return `Claro, ${firstName}. Vamos por partes. Primeiro posso conferir quanto entrou e saiu neste mês; depois identificamos o que pode ser ajustado e definimos uma meta possível. Quer começar pelo resumo do mês?`
-    const namedAccount = accounts.find((account) => normalized.includes(normalizeSpeech(account.name)))
-    const creditAccount = namedAccount?.type === "Cartão de crédito" ? namedAccount : accounts.find((account) => account.type === "Cartão de crédito")
-    if (/(cartao|credito|limite|fatura)/.test(normalized) && creditAccount) {
-      const fallbackLimit = creditAccount.detail.match(/limite\s+r\$\s*([\d.,]+)/i), limit = creditAccount.creditLimit || (fallbackLimit ? parseAssistantAmount(`R$ ${fallbackLimit[1]}`) : 0), available = limit ? Math.max(0, limit - creditAccount.balance) : 0
-      const closing = creditAccount.closingDay, due = creditAccount.dueDay
-      if (/(fecha|fechamento|melhor dia|vence|vencimento)/.test(normalized)) return closing ? `O ${creditAccount.name} fecha no dia ${closing}${due ? ` e vence no dia ${due}` : ""}. Em geral, compras feitas após o fechamento entram na próxima fatura; confirme a regra do banco antes de decidir.` : `A data de fechamento do ${creditAccount.name} ainda não foi cadastrada.`
-      if (/(disponivel|resta|sobrou|ainda tenho|posso gastar|limite)/.test(normalized)) return limit ? `Claro, ${firstName}. No ${creditAccount.name}, seu limite total é ${formatValue(limit)}. Como o total comprometido em todas as faturas é de ${formatValue(creditAccount.balance)}, você ainda tem ${formatValue(available)} disponível. Quer que eu confira também quanto desse limite já foi utilizado em porcentagem?` : `Encontrei o total comprometido do ${creditAccount.name}, em ${formatValue(creditAccount.balance)}, mas o limite total ainda não foi informado. Se você cadastrar esse limite, consigo calcular o disponível certinho.`
-      if (/(fatura|gastei|usado|utilizado)/.test(normalized)) return `O total comprometido do ${creditAccount.name} está em ${formatValue(creditAccount.balance)}${limit ? `, usando ${Math.round(creditAccount.balance / limit * 100)}% do limite. Veja a fatura de cada mês em Contas e cartões` : ""}.`
-      return `Seu cartão ${creditAccount.name} tem um total comprometido de ${formatValue(creditAccount.balance)}${limit ? ` e ${formatValue(available)} disponíveis` : ""}.`
-    }
-    if (/(posso comprar|cabe no cartao|simule|vale a pena comprar)/.test(normalized)) {
-      const purchase = parseAssistantAmount(question), card = accounts.find((account) => account.type === "Cartão de crédito"), limit = card?.creditLimit || 0, available = card && limit ? Math.max(0, limit - card.balance) : 0
-      if (!purchase) return `Consigo simular com os dados cadastrados. Diga o valor da compra, por exemplo: “posso comprar algo de 800 reais?”`
-      if (!card || !limit) return `A compra é de ${formatValue(purchase)}, mas preciso que o limite do cartão esteja cadastrado para comparar com segurança.`
-      return `${purchase <= available ? "A compra cabe" : "A compra não cabe"} no limite disponível cadastrado do ${card.name}. Valor da compra: ${formatValue(purchase)}; limite disponível: ${formatValue(available)}. Isso verifica apenas o limite, não se a compra é adequada para o seu orçamento.`
-    }
-    if (namedAccount && /(saldo|quanto tenho|disponivel|dinheiro)/.test(normalized)) return `${namedAccount.name} possui ${formatValue(namedAccount.balance)} registrados como saldo atual. ${accountDetail(namedAccount)}.`
-    if (/(minhas contas|saldos das contas|quanto tenho nas contas)/.test(normalized)) { const bankAccounts = accounts.filter((account) => account.type !== "Cartão de crédito"), total = bankAccounts.reduce((sum, account) => sum + account.balance, 0); return `Somando ${bankAccounts.map((account) => account.name).join(" e ")}, você tem ${formatValue(total)}. ${bankAccounts.map((account) => `${account.name}: ${formatValue(account.balance)}`).join("; ")}.` }
-    if (/(quanto entrou|receita|recebi|ganhei no mes)/.test(normalized)) return `As receitas confirmadas de ${monthLabels[month]} somam ${formatValue(income)}, distribuídas em ${incomes.length} movimentação${incomes.length === 1 ? "" : "ões"}.`
-    if (/(ultima movimentacao|ultimo lancamento|ultima transacao)/.test(normalized)) return lastMovement ? `A movimentação mais recente é “${lastMovement.description}”, de ${formatValue(lastMovement.amount)}, em ${shortDate(lastMovement.date)}, pela conta ${lastMovement.account}.` : "Ainda não há movimentações neste período."
-    if (/(maior compra|maior despesa|gasto mais alto)/.test(normalized)) return largestExpense ? `Sua maior despesa individual foi “${largestExpense.description}”, no valor de ${formatValue(largestExpense.amount)}, pela conta ${largestExpense.account}.` : "Ainda não há despesas pagas neste período."
-    if (/(assinatura mais cara|recorrencia mais cara|servico mais caro)/.test(normalized)) { const largest = [...activeRecurring].sort((a, b) => b.amount - a.amount)[0]; return largest ? `Sua assinatura ativa mais cara é ${largest.name}, por ${formatValue(largest.amount)} ao mês. Juntas, as recorrências cadastradas somam ${formatValue(recurringTotal)} por mês.` : "Você ainda não cadastrou assinaturas ou despesas recorrentes ativas." }
-    if (/(duplicad|cobranca repetida|lancamento repetido)/.test(normalized)) { const duplicates = currentItems.filter((item, index, all) => all.findIndex((other) => other.id !== item.id && normalizeSpeech(other.description) === normalizeSpeech(item.description) && other.amount === item.amount && other.date === item.date) < index); return duplicates.length ? `Encontrei ${duplicates.length} possível${duplicates.length === 1 ? "" : "is"} duplicidade${duplicates.length === 1 ? "" : "s"}. Abra Transações para revisar antes de excluir qualquer lançamento.` : "Não encontrei duplicidades exatas neste período. Ainda assim, vale revisar lançamentos com descrições diferentes e valores iguais." }
-    if (/(patrimonio|bens menos dividas)/.test(normalized)) { const assets = accounts.filter((account) => account.type !== "Cartão de crédito").reduce((sum, account) => sum + account.balance, 0) + goals.reduce((sum, goal) => sum + goal.saved, 0), debts = accounts.filter((account) => account.type === "Cartão de crédito").reduce((sum, account) => sum + account.balance, 0); return `Seu patrimônio líquido estimado no Synch Cash é ${formatValue(assets - debts)}: ${formatValue(assets)} em contas e metas, menos ${formatValue(debts)} em faturas cadastradas.` }
-    if (/(transferencia|transferir)/.test(normalized)) return "Posso ajudar a organizar a transferência. Use Nova transação e escolha a opção Transferência; o Synch criará a saída e a entrada pareadas sem contar o valor como gasto."
-    if (specificCategory && /(quanto|gastei|total|resumo)/.test(normalized)) { const value = categoryTotals[specificCategory] || 0, budget = budgets[specificCategory] || 0; return `Em ${specificCategory}, você gastou ${formatValue(value)} neste período${budget ? ` de um orçamento de ${formatValue(budget)}, restando ${formatValue(Math.max(0, budget - value))}` : ""}.` }
-    if (/(compar|mes passado|anterior)/.test(normalized)) { const difference = spent - previousSpent, direction = difference > 0 ? "aumentaram" : "diminuíram"; return previousSpent ? `${firstName}, comparei os dois períodos: suas despesas ${direction} ${Math.abs(Math.round(difference / previousSpent * 100))}%. Foram ${formatValue(spent)} agora e ${formatValue(previousSpent)} no mês anterior. ${difference > 0 ? "Vale a pena verificarmos qual categoria puxou esse aumento." : "Boa notícia: você conseguiu reduzir seus gastos."}` : "Ainda não encontrei dados suficientes do mês anterior para fazer uma comparação segura. Assim que houver mais movimentações, eu consigo comparar para você." }
-    if (/(previs|projec|fim do mes|ritmo)/.test(normalized)) return currentItems.length ? `Usando somente o ritmo dos lançamentos cadastrados até o dia ${latestDay}, a projeção simples de despesas para o mês é ${formatValue(projectedSpend)}. É uma estimativa e pode mudar com contas futuras ou registros ainda não adicionados.` : "Ainda não há dados suficientes para projetar o fechamento do mês."
-    if (/(media|por dia|diaria)/.test(normalized)) return `A média registrada é de ${formatValue(spent / latestDay)} por dia até o último lançamento do período. Em ${expenses.length} despesas pagas, o valor médio por despesa foi ${formatValue(expenses.length ? spent / expenses.length : 0)}.`
-    if (/(saldo|sobrou|restou|resultado)/.test(normalized)) return `Fiz as contas, ${firstName}: entraram ${formatValue(income)} e saíram ${formatValue(spent)} no período. Isso deixa um resultado de ${formatValue(balance)}. ${balance >= 0 ? "Você terminou no positivo." : "O resultado está negativo; podemos olhar juntos onde reduzir."}`
-    if (/(pendente|a pagar|venc)/.test(normalized)) return pendingTransactions.length ? `Você tem ${pendingTransactions.length} lançamentos pendentes, somando ${formatValue(pendingTotal)}: ${pendingTransactions.slice(0, 4).map((item) => `${item.description}, ${formatValue(item.amount)}`).join("; ")}.` : "Não há lançamentos pendentes neste período."
-    if (/(mais gast|maior gasto|categoria)/.test(normalized)) return top ? `Encontrei, ${firstName}: ${top[0]} foi sua maior categoria, com ${formatValue(top[1])}. Isso representa ${spent ? Math.round(top[1] / spent * 100) : 0}% das despesas do mês. Quer que eu mostre uma sugestão de economia para essa categoria?` : "Ainda não há despesas suficientes neste período para identificar uma categoria principal. Quando você adicionar mais movimentações, eu analiso para você."
-    if (/(econom|reduzir|cortar)/.test(normalized)) { const suggestion = top ? Math.round(top[1] * .1) : 0; return top ? `A melhor oportunidade está em ${top[0]}. Uma redução de 10% liberaria aproximadamente ${formatValue(suggestion)}. Você ainda tem ${formatValue(Math.max(0, totalBudget - spent))} do orçamento geral.` : "Adicione mais movimentações para eu encontrar oportunidades reais de economia." }
-    if (/(quanto.*gastar|orcamento|limite)/.test(normalized)) return `Você usou ${totalBudget ? Math.round(spent / totalBudget * 100) : 0}% do orçamento e ainda pode gastar ${formatValue(Math.max(0, totalBudget - spent))} sem ultrapassar o limite planejado.`
-    if (/(recorrente|assinatura)/.test(normalized)) return activeRecurring.length ? `Você possui ${activeRecurring.length} recorrências ativas, somando ${formatValue(recurringTotal)} por mês: ${activeRecurring.map((item) => `${item.name}, ${formatValue(item.amount)}`).join("; ")}.` : "Você não possui recorrências ativas. Posso preparar uma se você disser o nome e o valor mensal."
-    if (/(meta|objetivo)/.test(normalized)) { const active = [...goals].sort((a, b) => a.saved / a.target - b.saved / b.target)[0]; return active ? `A meta que mais precisa de atenção é “${active.name}”. Ela está em ${Math.round(active.saved / active.target * 100)}% e faltam ${formatValue(active.target - active.saved)}.` : "Você ainda não tem metas cadastradas. Posso criar uma se disser o nome e o valor desejado." }
-    return `Quero te ajudar, ${firstName}, mas não entendi completamente esse pedido. Você pode explicar de outro jeito? Por exemplo: “quanto tenho no cartão?”, “onde gastei mais?” ou “registre 50 reais no mercado”.`
-  }
 
-  const createAction = (text: string) => {
-    const normalized = normalizeSpeech(text), amount = parseAssistantAmount(text)
-    if (pending && /(confirma|confirmar|pode salvar|pode fazer|salvar)/.test(normalized)) { confirmPending(); return }
-    if (pending && /(cancela|cancelar|esquece|nao salva)/.test(normalized)) { setPending(null); assistantReply("Ação cancelada. Nenhum dado foi alterado."); return }
-    if (pending && /(na verdade|corrig|altere|mude|troque)/.test(normalized)) {
-      if (pending.kind === "transactions") { const category = knownCategory(assistantCategory(text, pending.drafts[0].type)); setPending({ ...pending, drafts: pending.drafts.map((draft, index) => index ? draft : { ...draft, amount: amount ? String(amount).replace(".", ",") : draft.amount, category: category !== "Outros" ? category : draft.category, description: category !== "Outros" ? assistantDescription(text, draft.type, category) : draft.description, account: accountNames.find((name) => normalized.includes(normalizeSpeech(name))) || draft.account }) }); assistantReply("Entendi a correção e atualizei a prévia. Confira os dados antes de confirmar."); return }
-    }
-    const category = categories.find((item) => normalized.includes(normalizeSpeech(item))) || knownCategory(assistantCategory(text, "expense"))
-    if (/(defin|crie|ajuste|mude).*(orcamento|limite)/.test(normalized) && amount > 0) { setPending({ id: nextId(), kind: "budget", source: text, confidence: category === "Outros" ? 80 : 96, category, amount }); assistantReply(`Preparei um novo limite de ${money.format(amount)} para ${category}. Confirme para eu atualizar o orçamento.`); return }
-    if (/(crie|criar|nova|quero).*(meta|objetivo)/.test(normalized) && amount > 0) { const match = normalized.match(/(?:meta|objetivo)(?:\s+de|\s+para)?\s+(.+?)(?:\s+(?:de|no valor|valendo|em)\s+(?:r\$|\d)|$)/), name = match?.[1]?.replace(/\buma\b/g, "").trim() || "Nova meta"; setPending({ id: nextId(), kind: "goal", source: text, confidence: match ? 94 : 82, name: name.charAt(0).toUpperCase() + name.slice(1), amount }); assistantReply(`A meta “${name}” foi preparada com objetivo de ${money.format(amount)}. Posso criar?`); return }
-    if (/(recorrente|todo mes|mensal)/.test(normalized) && amount > 0 && /(crie|cadastre|adicione|marque|pago|paguei)/.test(normalized)) { const draft = knownDraft(inferAssistantDraft(text, accountNames)); setPending({ id: nextId(), kind: "recurring", source: text, confidence: draft.category === "Outros" ? 84 : 96, name: draft.description, category: draft.category, amount }); assistantReply(`Identifiquei uma recorrência mensal de ${money.format(amount)} para ${draft.description}. Confirme para cadastrar.`); return }
-    const transactionIntent = /(gastei|paguei|comprei|recebi|ganhei|entrou|entrada|vendi|custou|lance|registre|adicione)/.test(normalized)
-    if (transactionIntent && amount > 0) { const drafts = splitAssistantTransactions(text).map((part) => knownDraft(inferAssistantDraft(part, accountNames))).filter((draft) => parseAssistantAmount(draft.amount) > 0), confidence = Math.round(drafts.reduce((sum, draft) => sum + (draft.confidence || 80), 0) / Math.max(1, drafts.length)); setPending({ id: nextId(), kind: "transactions", source: text, confidence, drafts }); assistantReply(`Entendi ${drafts.length === 1 ? "uma movimentação" : `${drafts.length} movimentações`}. Organizei os dados abaixo para sua revisão.`); return }
-    assistantReply(analyticalAnswer(text))
-  }
-
-  const processInput = (text: string, source: "text" | "voice") => {
+  const toPending = (proposal: AssistantProposal, source: string): AssistantAction => proposal.kind === "transactions"
+    ? { ...proposal, id: nextId(), source, drafts: proposal.drafts.map((draft) => ({ ...draft, amount: String(draft.amount).replace(".", ",") })) }
+    : { ...proposal, id: nextId(), source }
+  const processInput = async (text: string, source: "text" | "voice") => {
     const clean = text.trim(); if (!clean || processing) return
-    userMessage(clean, source); setProcessing(true); setMessage("")
-    window.setTimeout(() => { createAction(clean); setProcessing(false); setVoiceTranscript("") }, 520)
+    const history = conversation.slice(-20).map(({ role, text }) => ({ role, text }))
+    let pendingAction = null
+    if (pending) { const { id: droppedId, ...rest } = pending; void droppedId; pendingAction = rest }
+    userMessage(clean, source); setProcessing(true); setMessage(""); setVoiceTranscript("")
+    try {
+      const reply = await synchApi.sendAssistantMessage({ message: clean, history, source, month, hidden, pendingAction, lastUndo: lastUndo?.label || null })
+      if (reply.decision === "confirm") confirmPending()
+      else if (reply.decision === "cancel") { setPending(null); assistantReply("Tudo bem, cancelei a ação. Nenhum dado foi alterado.") }
+      else if (reply.decision === "undo") undoLast()
+      else { if (reply.action) setPending(toPending(reply.action, clean)); assistantReply(reply.answer) }
+    } catch (error) { assistantReply(error instanceof SynchApiError ? error.message : "Não consegui falar com a Synch IA agora. Tente novamente em instantes.") }
+    finally { setProcessing(false) }
   }
   const startVoice = async () => {
     if (listening) return recognitionRef.current?.stop()
@@ -552,9 +459,9 @@ function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, rec
       if (!created.length) return toast.error("Revise os valores antes de confirmar.")
       setItems((all) => [...created, ...all]); if (createdRecurring.length) setRecurring((all) => [...createdRecurring, ...all]); setLastUndo({ kind: "transactions", label: `${created.length} lançamento${created.length > 1 ? "s" : ""}`, transactionIds: created.map((item) => item.id), recurringIds: createdRecurring.map((item) => item.id) }); assistantReply(`${created.length === 1 ? "Movimentação adicionada" : `${created.length} movimentações adicionadas`} com sucesso. Se precisar, você pode desfazer a ação.`)
     } else if (pending.kind === "budget") { const previous = budgets[pending.category]; setBudgets((all) => ({ ...all, [pending.category]: pending.amount })); setLastUndo({ kind: "budget", label: `Orçamento de ${pending.category}`, category: pending.category, previous }); assistantReply(`Orçamento de ${pending.category} atualizado para ${money.format(pending.amount)}.`)
-    } else if (pending.kind === "goal") { const goal: GoalData = { id: nextId(), name: pending.name, saved: 0, target: pending.amount, deadline: "Sem prazo", color: "#22c55e" }; setGoals((all) => [...all, goal]); setLastUndo({ kind: "goal", label: `Meta ${pending.name}`, id: goal.id }); assistantReply(`Meta “${pending.name}” criada com objetivo de ${money.format(pending.amount)}.`)
-    } else { const item: RecurringData = { id: nextId(), name: pending.name, category: pending.category, amount: pending.amount, type: "expense", next: "Próximo mês", active: true }; setRecurring((all) => [item, ...all]); setLastUndo({ kind: "recurring", label: `Recorrência ${pending.name}`, id: item.id }); assistantReply(`Recorrência “${pending.name}” cadastrada por ${money.format(pending.amount)} ao mês.`) }
-    const label = pending.kind === "transactions" ? `${pending.drafts.length} movimentação${pending.drafts.length > 1 ? "ões" : ""}` : pending.kind === "budget" ? `Orçamento de ${pending.category}` : pending.kind === "goal" ? `Meta ${pending.name}` : `Recorrência ${pending.name}`
+    } else if (pending.kind === "goal") { const goal: GoalData = { id: nextId(), name: pending.name, saved: 0, target: pending.amount, deadline: pending.deadline || "Sem prazo", color: "#22c55e" }; setGoals((all) => [...all, goal]); setLastUndo({ kind: "goal", label: `Meta ${pending.name}`, id: goal.id }); assistantReply(`Meta “${pending.name}” criada com objetivo de ${money.format(pending.amount)}.`)
+    } else { const item: RecurringData = { id: nextId(), name: pending.name, category: pending.category, amount: pending.amount, type: pending.type || "expense", next: "Próximo mês", active: true, day: pending.day }; setRecurring((all) => [item, ...all]); setLastUndo({ kind: "recurring", label: `Recorrência ${pending.name}`, id: item.id }); assistantReply(`Recorrência “${pending.name}” cadastrada por ${money.format(pending.amount)} ao mês.`) }
+    const label = pending.kind === "transactions" ? `${pending.drafts.length} movimentaç${pending.drafts.length > 1 ? "ões" : "ão"}` : pending.kind === "budget" ? `Orçamento de ${pending.category}` : pending.kind === "goal" ? `Meta ${pending.name}` : `Recorrência ${pending.name}`
     const activityId = nextId(); setActivity((current) => [{ id: activityId, label, detail: "Confirmado pelo usuário", time: nowLabel(), status: "done" as const }, ...current].slice(0, 8))
     setPending(null); toast.success("Ação executada pelo Assistente Synch.")
   }
@@ -611,14 +518,14 @@ function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, rec
       <div className="assistant-active-context"><span><CalendarDays />{monthLabels[month]}</span><span><WalletCards />{accounts[0]?.name || "Contas"}</span><span><ShieldCheck />Confirmação ativa</span></div>
       <div className="chat-messages assistant-thread assistant-thread-v3" aria-live="polite">
         {conversation.length <= 1 && <div className="assistant-welcome"><span><Sparkles /></span><small>{greeting}, {firstName}</small><h3>O que vamos organizar hoje?</h3><p>Pergunte sobre seu dinheiro do seu jeito ou peça uma ação. Eu preparo tudo e você confirma antes de qualquer alteração.</p><div>{quickPrompts.slice(0, 3).map((item) => <button key={item.label} onClick={() => item.instant ? processInput(item.prompt, "text") : setMessage(item.prompt)}>{item.label}<ArrowRight /></button>)}</div></div>}
-        {conversation.map((item) => <div key={item.id} className={`assistant-thread-row ${item.role}`}><div className={item.role === "user" ? "user-message" : "assistant-message"}>{item.role === "assistant" && <div className="assistant-response-head"><span><Sparkles /></span><strong>{responseLabel(item.text)}</strong><small>Agora</small></div>}{item.source === "voice" && <Mic />}<span className="assistant-message-copy">{item.text}</span><small>{item.time}</small>{item.role === "assistant" && <div className="assistant-response-source"><Database /> Baseado em {currentItems.length} movimentações de {monthLabels[month]}</div>}{item.role === "assistant" && voiceOutput && <button className={`message-speak ${speaking ? "is-speaking" : ""}`} onClick={() => speaking ? stopSpeaking() : speak(item.text, true)} aria-label={speaking ? "Interromper resposta" : "Ouvir resposta novamente"}>{speaking ? <Square /> : <Volume2 />}</button>}</div></div>)}
+        {conversation.map((item) => <div key={item.id} className={`assistant-thread-row ${item.role}`}><div className={item.role === "user" ? "user-message" : "assistant-message"}>{item.role === "assistant" && <div className="assistant-response-head"><span><Sparkles /></span><strong>{responseLabel(item.text)}</strong><small>Agora</small></div>}{item.source === "voice" && <Mic />}<span className="assistant-message-copy">{item.text}</span><small>{item.time}</small>{item.role === "assistant" && <div className="assistant-response-source"><Database /> Analisado com seus dados do Synch Cash</div>}{item.role === "assistant" && voiceOutput && <button className={`message-speak ${speaking ? "is-speaking" : ""}`} onClick={() => speaking ? stopSpeaking() : speak(item.text, true)} aria-label={speaking ? "Interromper resposta" : "Ouvir resposta novamente"}>{speaking ? <Square /> : <Volume2 />}</button>}</div></div>)}
         {processing && <div className="assistant-thinking"><span /><span /><span /><small>Conferindo seu contexto e preparando uma resposta...</small></div>}
-        {pending && <div className="assistant-action-card"><div className="assistant-action-head"><span><Sparkles /></span><div><small>Ação preparada</small><strong>{pending.kind === "transactions" ? `${pending.drafts.length} movimentação${pending.drafts.length > 1 ? "ões" : ""} identificada${pending.drafts.length > 1 ? "s" : ""}` : pending.kind === "budget" ? "Atualizar orçamento" : pending.kind === "goal" ? "Criar meta financeira" : "Criar recorrência"}</strong></div><b>{pending.confidence}%</b></div><div className="assistant-action-summary"><span><Database /> Origem: sua solicitação</span><span><ShieldCheck /> Nenhuma alteração realizada ainda</span></div>{pending.kind === "transactions" ? <div className="assistant-draft-list">{pending.drafts.map((draft, index) => <article key={index}><div className="assistant-draft-number">{index + 1}</div><div className="assistant-draft-fields"><Input value={draft.description} onChange={(event) => updateDraft(index, { description: event.target.value })} aria-label="Descrição" /><Input value={draft.amount} onChange={(event) => updateDraft(index, { amount: event.target.value })} aria-label="Valor" /><Select value={draft.category} onValueChange={(value) => updateDraft(index, { category: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select><Select value={draft.account} onValueChange={(value) => updateDraft(index, { account: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{accountNames.map((account) => <SelectItem key={account} value={account}>{account}</SelectItem>)}</SelectContent></Select></div><div className="assistant-draft-meta"><span>{draft.type === "income" ? "Receita" : "Despesa"}</span><span>{shortDate(draft.date)}</span>{(draft.installments || 1) > 1 && <span>{draft.installments}x</span>}{draft.recurring && <span>Recorrente</span>}</div></article>)}</div> : <div className="assistant-simple-action"><span>{pending.kind === "budget" ? <ChartNoAxesCombined /> : pending.kind === "goal" ? <Target /> : <RefreshCcw />}</span><div><small>{pending.kind === "budget" ? pending.category : pending.kind === "goal" ? pending.name : `${pending.name} • ${pending.category}`}</small><strong>{money.format(pending.amount)}</strong>{pending.kind === "budget" && <p>Antes: {budgets[pending.category] ? money.format(budgets[pending.category]) : "não definido"} → Depois: {money.format(pending.amount)}</p>}{pending.kind === "recurring" && <p>Cobrança mensal ativa</p>}</div></div>}<div className="assistant-action-footer"><button onClick={() => { setPending(null); assistantReply("Tudo bem, cancelei a ação. Nenhum dado foi alterado.") }}>Cancelar</button><button className="confirm" onClick={confirmPending}><Check /> Confirmar e executar</button></div><p><ShieldCheck /> Você mantém o controle: revise os dados antes de confirmar.</p></div>}
+        {pending && <div className="assistant-action-card"><div className="assistant-action-head"><span><Sparkles /></span><div><small>Ação preparada</small><strong>{pending.kind === "transactions" ? `${pending.drafts.length} movimentaç${pending.drafts.length > 1 ? "ões" : "ão"} identificada${pending.drafts.length > 1 ? "s" : ""}` : pending.kind === "budget" ? "Atualizar orçamento" : pending.kind === "goal" ? "Criar meta financeira" : "Criar recorrência"}</strong></div><b>{pending.confidence}%</b></div><div className="assistant-action-summary"><span><Database /> Origem: sua solicitação</span><span><ShieldCheck /> Nenhuma alteração realizada ainda</span></div>{pending.kind === "transactions" ? <div className="assistant-draft-list">{pending.drafts.map((draft, index) => <article key={index}><div className="assistant-draft-number">{index + 1}</div><div className="assistant-draft-fields"><Input value={draft.description} onChange={(event) => updateDraft(index, { description: event.target.value })} aria-label="Descrição" /><Input value={draft.amount} onChange={(event) => updateDraft(index, { amount: event.target.value })} aria-label="Valor" /><Select value={draft.category} onValueChange={(value) => updateDraft(index, { category: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select><Select value={draft.account} onValueChange={(value) => updateDraft(index, { account: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{accountNames.map((account) => <SelectItem key={account} value={account}>{account}</SelectItem>)}</SelectContent></Select></div><div className="assistant-draft-meta"><span>{draft.type === "income" ? "Receita" : "Despesa"}</span><span>{shortDate(draft.date)}</span>{(draft.installments || 1) > 1 && <span>{draft.installments}x</span>}{draft.recurring && <span>Recorrente</span>}</div></article>)}</div> : <div className="assistant-simple-action"><span>{pending.kind === "budget" ? <ChartNoAxesCombined /> : pending.kind === "goal" ? <Target /> : <RefreshCcw />}</span><div><small>{pending.kind === "budget" ? pending.category : pending.kind === "goal" ? pending.name : `${pending.name} • ${pending.category}`}</small><strong>{money.format(pending.amount)}</strong>{pending.kind === "budget" && <p>Antes: {budgets[pending.category] ? money.format(budgets[pending.category]) : "não definido"} → Depois: {money.format(pending.amount)}</p>}{pending.kind === "goal" && pending.deadline && <p>Prazo: {pending.deadline}</p>}{pending.kind === "recurring" && <p>{pending.type === "income" ? "Receita" : "Cobrança"} mensal{pending.day ? `, todo dia ${pending.day}` : ""}</p>}</div></div>}<div className="assistant-action-footer"><button disabled={processing} onClick={() => { setPending(null); assistantReply("Tudo bem, cancelei a ação. Nenhum dado foi alterado.") }}>Cancelar</button><button className="confirm" disabled={processing} onClick={confirmPending}><Check /> Confirmar e executar</button></div><p><ShieldCheck /> Você mantém o controle: revise os dados antes de confirmar.</p></div>}
         <div ref={messagesEndRef} />
       </div>
       <div className="assistant-prompt-suggestions">{quickPrompts.map((item) => <button key={item.label} onClick={() => item.instant ? processInput(item.prompt, "text") : setMessage(item.prompt)}>{item.label}</button>)}</div>
       <form className="chat-input assistant-composer" onSubmit={submit}><div><Input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Converse comigo ou peça uma ação..." disabled={processing} /><small>Ex.: “Synch, quanto gastei com alimentação e o que vence agora?”</small></div><button type="button" className={`voice-button ${listening ? "active" : ""}`} onClick={startVoice} disabled={!voiceSupported || processing} aria-label="Abrir conversa por voz"><Mic /></button><Button type="submit" aria-label="Enviar mensagem" size="icon" disabled={processing || !message.trim()}><Send /></Button></form>
-      <small className="assistant-disclaimer"><ShieldCheck /> A Synch usa os dados deste dispositivo e sempre pede confirmação antes de agir.</small>
+      <small className="assistant-disclaimer"><ShieldCheck /> A Synch IA analisa seus dados para responder e sempre pede confirmação antes de alterar algo.</small>
     </section>
 
     {voiceMode && <div className="assistant-voice-overlay" role="dialog" aria-modal="true" aria-label="Conversa por voz">

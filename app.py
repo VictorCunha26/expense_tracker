@@ -2,6 +2,7 @@ import csv
 import hashlib
 import hmac
 import io
+import json
 import os
 import re
 import unicodedata
@@ -15,7 +16,9 @@ from flask import Flask, Response, jsonify, request, session
 from supabase import AuthApiError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+# connection carrega o .env; synch_ia le as variaveis dele ao ser importado.
 from connection import conectar, conectar_admin, conectar_como_usuario, renovar_sessao
+import synch_ia
 
 CAKTO_WEBHOOK_SECRET = os.getenv("CAKTO_WEBHOOK_SECRET")
 
@@ -371,10 +374,6 @@ def _valor(t):
 
 def _e_despesa(t):
     return t.get("tipo", "despesa") != "receita"
-
-
-def _mes_atual():
-    return date.today().strftime("%Y-%m")
 
 
 def _do_mes(transacoes, mes):
@@ -2076,41 +2075,55 @@ def webhook_cakto():
 
 
 # ------------------------------------------------------------------
-# Assistente (analise local por regras, sem chamar nenhum modelo
-# externo -- le as transacoes do mes e responde sobre o que ja esta
-# no banco).
+# Assistente (Synch IA): o modelo em si fica em synch_ia.py. Aqui so se
+# monta o retrato das financas do usuario que ele vai consultar.
 # ------------------------------------------------------------------
 
-def _responder(pergunta, gasto, orcamento, maior, qtd, metas_usuario):
-    texto = pergunta.lower()
+def _fatura_do_ciclo(cartao, transacoes, ciclo, pagos, ajustes):
+    fechamento = int(cartao.get("fechamento") or 28)
+    total = _compras_do_ciclo(transacoes, cartao, ciclo) + ajustes.get((cartao["id"], ciclo), 0.0)
+    pago = pagos.get((cartao["id"], ciclo), 0.0)
+    fatura = {
+        "ciclo": ciclo,
+        "fecha_em": date(int(ciclo[:4]), int(ciclo[5:7]), min(fechamento, _ultimo_dia_do_mes(ciclo))).isoformat(),
+        "total": round(total, 2), "pago": round(pago, 2), "restante": round(max(0.0, total - pago), 2),
+    }
+    if cartao.get("vencimento"):
+        fatura["vence_em"] = _vencimento_da_fatura(ciclo, fechamento, int(cartao["vencimento"])).isoformat()
+    return fatura
 
-    if "mais" in texto or "gast" in texto:
-        if not maior:
-            return "Ainda não há despesas suficientes neste mês para analisar."
-        pct = round(maior[1] / gasto * 100) if gasto else 0
-        return f"{maior[0]} é sua maior categoria, com R$ {maior[1]:.2f}, representando {pct}% das despesas do mês."
 
-    if "econom" in texto or "poupar" in texto:
-        sobra = max(0, orcamento - gasto)
-        alvo = maior[0] if maior else "a categoria mais frequente"
-        corte = (maior[1] * 0.1) if maior else 0
-        return f"Seu orçamento ainda tem R$ {sobra:.2f} disponível. Um corte de 10% em {alvo} já libera R$ {corte:.2f}."
+def _contas_para_ia(supabase, contas, transacoes):
+    hoje = date.today()
+    resultado = []
+    for c in contas:
+        if c.get("tipo") != "Cartão de crédito":
+            resultado.append({"nome": c["nome"], "tipo": c.get("tipo") or "Conta corrente", "saldo": _saldo_conta(c, transacoes)})
+            continue
+        usado = _cartao_usado(supabase, transacoes, c)
+        limite = float(c.get("limite_credito") or 0)
+        aberta = _mes_da_fatura(hoje.isoformat(), int(c.get("fechamento") or 28))
+        anterior = _somar_meses(date(int(aberta[:4]), int(aberta[5:7]), 1), -1).strftime("%Y-%m")
+        pagos = _pago_total(supabase, transacoes, conta_id=c["id"])
+        ajustes = _ajustes_ativos(supabase, conta_id=c["id"])
+        resultado.append({
+            "nome": c["nome"], "tipo": "Cartão de crédito",
+            "limite": limite or None,
+            "comprometido_em_todas_as_faturas": usado,
+            "limite_disponivel": round(max(0.0, limite - usado), 2) if limite else None,
+            "dia_fechamento": c.get("fechamento"), "dia_vencimento": c.get("vencimento"),
+            "fatura_fechada_anterior": _fatura_do_ciclo(c, transacoes, anterior, pagos, ajustes),
+            "fatura_aberta": _fatura_do_ciclo(c, transacoes, aberta, pagos, ajustes),
+        })
+    return resultado
 
-    if "meta" in texto:
-        if not metas_usuario:
-            return "Você ainda não cadastrou metas. Comece por uma reserva de emergência."
-        pendente = min(
-            metas_usuario,
-            key=lambda m: (float(m.get("guardado") or 0) / (float(m.get("alvo") or 1) or 1)),
-        )
-        falta = max(0, float(pendente.get("alvo") or 0) - float(pendente.get("guardado") or 0))
-        return f"Priorize \"{pendente['nome']}\": faltam R$ {falta:.2f} para concluir. Automatize um aporte logo depois da entrada da renda."
 
-    if "pendente" in texto or "conta" in texto:
-        return "Confira a aba Transações filtrando por status Pendente para ver o que vence."
-
-    pct = round(gasto / orcamento * 100) if orcamento else 0
-    return f"Analisei {qtd} movimentações deste mês. Seu gasto atual utiliza {pct}% do orçamento planejado."
+def _analitica(t):
+    """Mesmo criterio de isAnalytical no front: transferencia, pagamento de
+    fatura e o marcador antigo "Fatura do cartão" nao sao gasto nem receita."""
+    if t.get("kind") == "transfer" or t.get("fatura_id") or t.get("fatura_pagamento_id"):
+        return False
+    return not (re.fullmatch(r"fatura do cart[aã]o", (t.get("nome_despesa") or "").strip(), re.I) and not t.get("payment_method"))
 
 
 @app.route("/api/v1/assistant/messages", methods=["POST"])
@@ -2123,22 +2136,37 @@ def api_assistente(supabase):
     pergunta = (corpo.get("message") or "").strip()
     if not pergunta:
         return json_error("VALIDATION", "Envie uma mensagem.", 422)
+    if len(pergunta) > synch_ia.MAX_TEXTO:
+        return json_error("VALIDATION", "Mensagem longa demais. Tente resumir o pedido.", 422)
 
-    todas = _transacoes(supabase)
-    do_mes = _do_mes(todas, _mes_atual())
-    limites = _orcamentos(supabase)
+    contas = _contas(supabase)
+    transacoes = _transacoes(supabase)
+    contas_por_nome = {_chave_conta(c["nome"]): c for c in contas}
+    dados = {
+        "hoje": date.today(),
+        "usuario": _preferencias(supabase).get("nome") or "Usuário",
+        "contas": _contas_para_ia(supabase, contas, transacoes),
+        "transacoes": [{**_serializar_transacao(t, contas_por_nome), "analitica": _analitica(t)} for t in transacoes],
+        "orcamentos": _orcamentos(supabase),
+        "categorias": _nomes_categorias(supabase, transacoes),
+        "metas": [_serializar_meta(m) for m in _metas(supabase)],
+        "recorrentes": [_serializar_recorrente(r) for r in _recorrentes(supabase)],
+    }
+    pendente = corpo.get("pendingAction") if isinstance(corpo.get("pendingAction"), dict) else None
+    estado = {
+        "mes_na_tela": str(corpo.get("month") or "")[:7] or None,
+        "origem": "voice" if corpo.get("source") == "voice" else "text",
+        "valores_ocultos": bool(corpo.get("hidden")),
+        "acao_pendente": pendente if pendente and len(json.dumps(pendente)) <= synch_ia.MAX_TEXTO else None,
+        "ultima_acao": str(corpo.get("lastUndo") or "")[:120] or None,
+    }
+    historico = corpo.get("history") if isinstance(corpo.get("history"), list) else []
 
-    gastas = [t for t in do_mes if _e_despesa(t) and t.get("kind") != "transfer" and t.get("status") == "pago"]
-    gasto = sum(_valor(t) for t in gastas)
-    orcamento_total = sum(limites.values())
-
-    por_categoria = defaultdict(float)
-    for t in gastas:
-        por_categoria[t.get("categoria") or "Outros"] += _valor(t)
-    maior = max(por_categoria.items(), key=lambda i: i[1], default=None)
-
-    resposta = _responder(pergunta, gasto, orcamento_total, maior, len(do_mes), _metas(supabase))
-    return json_ok({"conversationId": corpo.get("conversationId") or str(uuid.uuid4()), "answer": resposta})
+    try:
+        resposta = synch_ia.responder(pergunta, [h for h in historico if isinstance(h, dict)], dados, estado)
+    except synch_ia.IAIndisponivel as e:
+        return json_error("AI_UNAVAILABLE", str(e), 503)
+    return json_ok({"conversationId": corpo.get("conversationId") or str(uuid.uuid4()), **resposta})
 
 
 # ------------------------------------------------------------------
