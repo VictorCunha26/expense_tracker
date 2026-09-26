@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 from functools import wraps
 
 from flask import Flask, Response, jsonify, request, session
-from supabase import AuthApiError
+from supabase import AuthApiError, AuthError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # connection carrega o .env; synch_ia le as variaveis dele ao ser importado.
@@ -144,8 +144,14 @@ def _cor_valida(cor, padrao):
 
 
 def _frontend_url(caminho):
-    base = request.host_url.rstrip("/")
-    return f"{base}{caminho}"
+    """Endereco do front para links de e-mail. Em producao front e API tem a
+    mesma origem; em dev o front (:3000) chama o Flask (:5000), entao vale a
+    origem de quem fez o pedido, se for a propria API ou localhost."""
+    base = os.getenv("FRONTEND_URL") or request.host_url
+    origem = request.headers.get("Origin") or ""
+    if not os.getenv("FRONTEND_URL") and re.fullmatch(r"https?://(localhost|127\.0\.0\.1)(:\d+)?", origem):
+        base = origem
+    return f"{base.rstrip('/')}{caminho}"
 
 
 # ------------------------------------------------------------------
@@ -898,8 +904,9 @@ def api_forgot_password():
         except AuthApiError as erro:
             if erro.code == "over_email_send_rate_limit":
                 return json_error("RATE_LIMITED", _mensagem_erro_auth(erro), 429)
+            app.logger.warning("Supabase recusou o e-mail de recuperação: %s (%s)", erro.code, erro.message)
         except Exception:
-            pass
+            app.logger.exception("Falha ao pedir o e-mail de recuperação")
     # Mensagem igual sempre que o e-mail exista ou nao -- evita que alguem
     # descubra quais e-mails estao cadastrados por tentativa.
     return json_ok({"message": "Se o e-mail estiver cadastrado, enviamos um link para redefinir a senha."})
@@ -907,15 +914,23 @@ def api_forgot_password():
 
 @app.route("/api/v1/auth/reset-password/exchange", methods=["POST"])
 def api_reset_password_exchange():
-    """Fluxo PKCE: a pagina de redefinicao troca o ?code=... da URL por um
-    access/refresh token antes de deixar digitar a senha nova."""
-    codigo = _corpo().get("code")
-    if not codigo:
+    """A pagina de redefinicao troca o que veio no link por um access/refresh
+    token antes de deixar digitar a senha nova: ?token_hash=... (modelo de
+    e-mail com {{ .TokenHash }}) ou ?code=... (fluxo PKCE)."""
+    corpo = _corpo()
+    token_hash, codigo = corpo.get("tokenHash"), corpo.get("code")
+    if not token_hash and not codigo:
         return json_error("INVALID_TOKEN", "Link inválido ou expirado.", 422)
     supabase = conectar()
     try:
-        resposta = supabase.auth.exchange_code_for_session({"auth_code": codigo})
-    except Exception:
+        if token_hash:
+            resposta = supabase.auth.verify_otp({"token_hash": token_hash, "type": "recovery"})
+        else:
+            resposta = supabase.auth.exchange_code_for_session({"auth_code": codigo})
+    except Exception as erro:
+        app.logger.warning("Link de recuperação recusado: %s", erro)
+        return json_error("INVALID_TOKEN", "Link inválido ou expirado.", 422)
+    if not resposta.session:
         return json_error("INVALID_TOKEN", "Link inválido ou expirado.", 422)
     return json_ok({
         "accessToken": resposta.session.access_token,
@@ -941,8 +956,23 @@ def api_reset_password_confirm():
     try:
         supabase.auth.set_session(access_token, refresh_token)
         supabase.auth.update_user({"password": nova})
+    except AuthError as erro:
+        codigo = getattr(erro, "code", None)
+        app.logger.warning("Supabase recusou a nova senha: %s (%s)", codigo, erro.message)
+        if codigo == "same_password":
+            return json_error("VALIDATION", "A nova senha precisa ser diferente da senha atual.", 422)
+        if codigo == "weak_password":
+            motivos = {
+                "length": "use mais caracteres",
+                "characters": "misture letras maiúsculas, minúsculas, números e símbolos",
+                "pwned": "essa senha apareceu em vazamentos, escolha outra",
+            }
+            dicas = [motivos[r] for r in (getattr(erro, "reasons", None) or []) if r in motivos]
+            return json_error("VALIDATION", "Senha fraca demais" + (f": {'; '.join(dicas)}." if dicas else "."), 422)
+        return json_error("AUTH_ERROR", "Não foi possível atualizar a senha. O link pode ter expirado; peça um novo.", 422)
     except Exception:
-        return json_error("AUTH_ERROR", "Não foi possível atualizar a senha. O link pode ter expirado.", 422)
+        app.logger.exception("Falha ao gravar a nova senha")
+        return json_error("AUTH_ERROR", "Não foi possível atualizar a senha. O link pode ter expirado; peça um novo.", 422)
     return json_ok({"message": "Senha atualizada."})
 
 

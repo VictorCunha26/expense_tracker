@@ -69,7 +69,7 @@ export const synchApi = {
   signOut: () => request<void>("/v1/auth/logout", { method: "POST" }),
   forgotPassword: (email: string) => request<{ message: string }>("/v1/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
   changePassword: (newPassword: string) => request<void>("/v1/auth/password", { method: "PUT", body: JSON.stringify({ newPassword }) }),
-  exchangeResetCode: (code: string) => request<{ accessToken: string; refreshToken: string }>("/v1/auth/reset-password/exchange", { method: "POST", body: JSON.stringify({ code }) }),
+  exchangeResetCode: (link: { code?: string; tokenHash?: string }) => request<{ accessToken: string; refreshToken: string }>("/v1/auth/reset-password/exchange", { method: "POST", body: JSON.stringify(link) }),
   confirmResetPassword: (accessToken: string, refreshToken: string, newPassword: string) => request<{ message: string }>("/v1/auth/reset-password/confirm", { method: "POST", body: JSON.stringify({ accessToken, refreshToken, newPassword }) }),
 
   createTransaction: (transaction: NewTransaction) => request<Transaction[]>("/v1/transactions", { method: "POST", body: JSON.stringify(transaction) }),

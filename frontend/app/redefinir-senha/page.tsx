@@ -14,13 +14,21 @@ type Status = "loading" | "ready" | "invalid" | "done"
 export default function RedefinirSenhaPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [status, setStatus] = useState<Status>("loading")
+  const [status, setStatus] = useState<Status>("loading"), [invalidReason, setInvalidReason] = useState("")
   const [accessToken, setAccessToken] = useState("")
   const [refreshToken, setRefreshToken] = useState("")
   const [password, setPassword] = useState(""), [confirmation, setConfirmation] = useState(""), [showPassword, setShowPassword] = useState(false), [saving, setSaving] = useState(false)
 
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""))
+    // Os tokens do link não devem ficar na barra de endereço nem no histórico.
+    if (window.location.hash || window.location.search) window.history.replaceState(null, "", window.location.pathname)
+    const errorCode = fragment.get("error_code") || searchParams.get("error_code")
+    if (errorCode) {
+      setInvalidReason(errorCode === "otp_expired" ? "Este link já foi usado ou expirou. Cada link funciona uma vez só e vale por pouco tempo; peça um novo." : "O Supabase recusou este link. Peça um novo link de recuperação.")
+      setStatus("invalid")
+      return
+    }
     const fragmentToken = fragment.get("access_token")
     if (fragmentToken) {
       setAccessToken(fragmentToken)
@@ -28,9 +36,9 @@ export default function RedefinirSenhaPage() {
       setStatus("ready")
       return
     }
-    const code = searchParams.get("code")
-    if (code) {
-      synchApi.exchangeResetCode(code)
+    const code = searchParams.get("code"), tokenHash = searchParams.get("token_hash")
+    if (code || tokenHash) {
+      synchApi.exchangeResetCode(tokenHash ? { tokenHash } : { code: code! })
         .then((result) => { setAccessToken(result.accessToken); setRefreshToken(result.refreshToken); setStatus("ready") })
         .catch(() => setStatus("invalid"))
       return
@@ -63,7 +71,7 @@ export default function RedefinirSenhaPage() {
         <div className="login-form-heading">
           <span className="login-welcome-icon"><LockKeyhole /></span>
           <h2>Redefinir senha</h2>
-          <p>{status === "invalid" ? "O link é inválido ou expirou. Solicite a recuperação novamente." : status === "done" ? "Senha atualizada com sucesso." : "Escolha uma nova senha para sua conta."}</p>
+          <p>{status === "invalid" ? invalidReason || "O link é inválido ou expirou. Solicite a recuperação novamente." : status === "done" ? "Senha atualizada com sucesso." : "Escolha uma nova senha para sua conta."}</p>
         </div>
         {status === "ready" && <form className="login-form" onSubmit={submit}>
           <label className="login-field"><span>Nova senha</span><div><LockKeyhole /><Input type={showPassword ? "text" : "password"} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo de 6 caracteres" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}>{showPassword ? <EyeOff /> : <Eye />}</button></div></label>
