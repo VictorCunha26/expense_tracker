@@ -1051,42 +1051,6 @@ button { cursor: pointer; }
 .invoice-items.invoice-items-v2 > .invoice-scroll-list { display: block; padding: 0 4px 0 0; border-bottom: 0; }
 @media (max-width: 767px) { .invoice-items.invoice-items-v2 > .invoice-list-head { display: none; } }
 
-/* Plano: cards de Básico Vitalício e Synch IA, no mesmo modelo (badge, ícone, preço, lista de benefícios) */
-.plan-card { padding: 24px; display: flex; flex-direction: column; }
-.plan-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.plan-card-icon { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 12px; }
-.plan-card-icon svg { width: 20px; }
-.plan-card-badge { padding: 6px 12px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
-.plan-card-eyebrow { display: block; margin-top: 18px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.plan-card h3 { margin-top: 6px; color: #f3f4f5; font-size: 22px; }
-.plan-card-description { margin-top: 6px; color: #868f89; font-size: 12px; line-height: 1.5; }
-.plan-card-quote { margin-top: 16px; padding: 13px 14px; border: 1px solid #1f2621; border-radius: 11px; background: #0a0d0b; color: #8b948d; font-size: 11px; line-height: 1.5; }
-.plan-card-price { margin-top: 20px; display: flex; align-items: baseline; gap: 8px; }
-.plan-card-price strong { color: #f5f7f6; font-size: 32px; letter-spacing: -.01em; }
-.plan-card-price span { color: #6f796f; font-size: 12px; }
-.plan-card-monthly { margin-top: 4px; font-size: 12px; font-weight: 600; }
-.plan-card-cta { margin-top: 18px; width: 100%; justify-content: center; gap: 8px; }
-.plan-card-cta svg { width: 16px; }
-.plan-card-note { margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; color: #626c65; font-size: 10px; }
-.plan-card-note svg { width: 12px; }
-.plan-card-features { margin: 20px 0 0; padding-top: 18px; flex: 1; border-top: 1px solid #1e241f; list-style: none; }
-.plan-card-features li { margin: 10px 0; display: flex; align-items: flex-start; gap: 9px; color: #a7afa9; font-size: 12px; line-height: 1.4; }
-.plan-card-features li svg { width: 15px; flex: 0 0 auto; margin-top: 1px; }
-.plan-card-complete { border-color: #2c6a3d; box-shadow: inset 0 0 0 1px #1f7a3c33, 0 18px 50px #0f7d2d14; }
-.plan-card-complete .plan-card-icon { color: #45d474; background: #102a1a; }
-.plan-card-complete .plan-card-badge { color: #0d1a10; background: #35d168; }
-.plan-card-complete .plan-card-eyebrow { color: #45d474; }
-.plan-card-complete .plan-card-monthly { color: #45d474; }
-.plan-card-complete .plan-card-features li svg { color: #35d168; }
-.plan-card-basic .plan-card-icon { color: #9aa6a0; background: #171b18; }
-.plan-card-basic .plan-card-badge { color: #cdd3ce; background: #1c211d; }
-.plan-card-basic .plan-card-eyebrow { color: #7c867e; }
-.plan-card-basic .plan-card-features li svg { color: #7c867e; }
-@media (max-width: 767px) {
-  .plan-card { padding: 18px; }
-  .plan-card-price strong { font-size: 26px; }
-}
-
 /* Cor do cartão (editor) e aviso de estorno (modal de transação) */
 .card-color-options { display: flex; flex-wrap: wrap; gap: 12px; padding: 4px 2px; }
 .card-color-options button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--ink); background: var(--swatch); box-shadow: inset 0 0 0 1px #ffffff2e; outline: 2px solid transparent; outline-offset: 3px; transition: transform .15s ease, outline-color .15s ease; }

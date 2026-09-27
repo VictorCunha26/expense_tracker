@@ -62,7 +62,7 @@ export type NewTransaction = Omit<Transaction, "id"> & { installments?: number }
 export type NewAccount = Omit<Account, "id" | "balance"> & { balance?: number }
 
 export const synchApi = {
-  bootstrap: (signal?: AbortSignal) => request<SynchBootstrap & { plan: "gratis" | "synch_ia" }>("/v1/bootstrap", { signal }),
+  bootstrap: (signal?: AbortSignal) => request<SynchBootstrap>("/v1/bootstrap", { signal }),
 
   signIn: (email: string, password: string, remember = true) => request<{ user: Preferences }>("/v1/auth/login", { method: "POST", body: JSON.stringify({ email, password, remember }) }),
   signUp: (name: string, email: string, password: string) => request<{ user: Preferences; needsEmailConfirmation?: boolean }>("/v1/auth/register", { method: "POST", body: JSON.stringify({ name, email, password }) }),
@@ -118,8 +118,6 @@ export const synchApi = {
   getDataQualityIssues: () => request<Array<{ id: string; type: string; transactionId: number; message: string }>>("/v1/data-quality/issues"),
   resolveDataIssue: (issueId: string) => request<void>(`/v1/data-quality/issues/${issueId}/resolve`, { method: "POST", body: JSON.stringify({}) }),
 
-  getSubscription: () => request<{ plan: "gratis" | "synch_ia"; planName: string; status: string; renewalAt?: string; checkoutUrl?: string }>("/v1/billing/subscription"),
-  cancelSubscription: () => request<{ message: string }>("/v1/billing/subscription/cancel", { method: "POST" }),
 
   // A IA pode consultar os dados em várias rodadas antes de responder, então espera mais que o padrão.
   sendAssistantMessage: (body: AssistantRequest) => request<AssistantReply>("/v1/assistant/messages", { method: "POST", body: JSON.stringify(body) }, 120_000),

@@ -14,7 +14,7 @@ Frontend demonstrativo com dados locais, código-fonte e cliente HTTP tipado par
 | Metas, recorrências, orçamentos, preferências | app/page.tsx: useStoredState e setters | Persistência por usuário; não reutilizar armazenamento global local entre contas reais |
 | Transferências | app/page.tsx: ramo mode=transfer | Operação atômica no backend; tratar par na edição/exclusão e retornar saldos atualizados |
 | Calendário e planejamento | components/advanced-finance.tsx | Receber snapshot coerente; definir regra de datas e projeções com backend |
-| Assinatura | components/advanced-finance.tsx: SubscriptionView; components/payment-status-page.tsx | Usar assinatura validada no servidor; retorno da Cakto não ativa plano |
+| Acesso vitalício | components/payment-status-page.tsx; webhook `/webhooks/cakto` no app.py | O pagamento único na Cakto só autoriza o cadastro com aquele e-mail; o retorno do checkout não autoriza nada sozinho |
 | Assistente | app/page.tsx: AssistantExperience, processInput, confirmPending | Trocar regras locais por API; executar ferramentas só após confirmação; nova chave idempotente por ação |
 | Voz | app/page.tsx: reconhecimento e speak | Navegador hoje; transcrição e voz premium via servidor ainda pendentes |
 | Comprovantes | receiptName em Transaction | Upload real, autorização por usuário, URL temporária e exclusão segura |
@@ -54,7 +54,7 @@ Os nomes dos componentes são pontos de busca; não há necessidade de preservar
 - Recorrências não possuem execução agendada no servidor; notificações, resumo semanal e compartilhamento familiar não estão automatizados.
 - O arquivo do comprovante não é persistido: apenas seu nome.
 - Importação CSV/OFX é uma interpretação local com revisão; validar os formatos reais dos bancos e deduplicação no servidor.
-- Plano e limites locais são demonstração. Webhook, cancelamento, consumo e bloqueios por plano precisam de validação do backend.
+- Não existem planos nem limites por plano: toda conta usa todas as funcionalidades. O único pagamento é o acesso vitalício, exigido para criar a conta. As tabelas `assinaturas` do Supabase ficaram sem uso.
 - Confirmar domínio/e-mail de suporte, preços, periodicidade e links Cakto antes de publicar para clientes.
 - Sem chaves de IA, gateway, banco ou segredos no ZIP. Nunca colocar segredos em NEXT_PUBLIC_*.
 - Configuração de CORS, cookies, CSRF e autorização depende da implantação escolhida. Validar no backend; não desabilitar proteções para contornar erros.

@@ -7,7 +7,6 @@ import { defaultCategories } from "./categories"
 import type { Account, GoalData, InvoiceAdjustment, InvoicePayment, Preferences, RecurringData, Transaction } from "./models"
 
 export type AuthStatus = "loading" | "authenticated" | "unauthenticated" | "error"
-export type Plan = "gratis" | "synch_ia"
 
 type SynchData = {
   transactions: Transaction[]
@@ -19,7 +18,6 @@ type SynchData = {
   goals: GoalData[]
   preferences: Preferences
   categories: string[]
-  plan: Plan
 }
 
 const empty: SynchData = {
@@ -27,16 +25,13 @@ const empty: SynchData = {
   budgets: {}, recurring: [], goals: [],
   preferences: { name: "", email: "", notifications: true, weekly: true },
   categories: defaultCategories,
-  plan: "gratis",
 }
 
 // Fonte unica dos dados reais: carrega tudo de /v1/bootstrap uma vez, e toda
 // mutacao (criar transacao, pagar fatura, etc.) e seguida de um refresh --
 // nunca aplicamos o efeito localmente por cima, pra nao duplicar calculo que
 // o servidor ja fez (ver docs/BACKEND_INTEGRATION.md do design original).
-// `onPlanLimit` é chamado quando o servidor recusa uma ação por causa do plano (403 PLAN_LIMIT) --
-// o app leva o usuário pra tela de assinatura, com o motivo exato já explicado no toast.
-export function useSynchData(onPlanLimit?: () => void) {
+export function useSynchData() {
   const [status, setStatus] = useState<AuthStatus>("loading")
   const [data, setData] = useState<SynchData>(empty)
   const loadingRef = useRef(false)
@@ -56,7 +51,6 @@ export function useSynchData(onPlanLimit?: () => void) {
         goals: boot.goals,
         preferences: boot.preferences,
         categories: boot.categories?.length ? boot.categories : defaultCategories,
-        plan: boot.plan,
       })
       setStatus("authenticated")
     } catch (error) {
@@ -87,10 +81,9 @@ export function useSynchData(onPlanLimit?: () => void) {
         return null
       }
       toast.error(error instanceof Error ? error.message : "Não foi possível concluir a ação.")
-      if (error instanceof SynchApiError && error.code === "PLAN_LIMIT") onPlanLimit?.()
       return null
     }
-  }, [refresh, onPlanLimit])
+  }, [refresh])
 
   return {
     status,

@@ -1,4 +1,4 @@
-export type ViewKey = "overview" | "transactions" | "calendar" | "categories" | "accounts" | "recurring" | "goals" | "planning" | "calculator" | "reports" | "assistant" | "subscription" | "settings"
+export type ViewKey = "overview" | "transactions" | "calendar" | "categories" | "accounts" | "recurring" | "goals" | "planning" | "calculator" | "reports" | "assistant" | "settings"
 
 export type Transaction = {
   id: number

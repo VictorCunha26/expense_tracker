@@ -29,12 +29,12 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Toaster } from "@/components/ui/sonner"
-import { CalendarView, CommandPalette, ImportReviewDialog, PlanningView, SubscriptionView } from "@/components/advanced-finance"
+import { CalendarView, CommandPalette, ImportReviewDialog, PlanningView } from "@/components/advanced-finance"
 import { AccountsCardCenter } from "@/components/accounts-card-center"
 import { FinancialCalculator } from "@/components/financial-calculator"
 import { synchApi, SynchApiError, type NewTransaction } from "@/lib/synch-api"
 import { CategoriesContext, categoryColor, systemCategories, useCategories } from "@/lib/categories"
-import { useSynchData, type Plan } from "@/lib/use-synch-data"
+import { useSynchData } from "@/lib/use-synch-data"
 import { cardCycles, cash, cents, invoice, isAnalytical, purchaseCycle, shiftMonth } from "@/lib/invoice-ledger"
 import type { Account, AssistantProposal, GoalData, LocalLedger, Preferences, RecurringData, Transaction, ViewKey } from "@/lib/models"
 
@@ -149,7 +149,7 @@ const navItems: { key: ViewKey; label: string; icon: typeof LayoutDashboard }[] 
   { key: "recurring", label: "Recorrentes", icon: RefreshCcw }, { key: "goals", label: "Metas", icon: Target },
   { key: "planning", label: "Planejamento", icon: TrendingUp }, { key: "calculator", label: "Calculadora financeira", icon: Calculator },
   { key: "reports", label: "Relatórios", icon: FileChartColumn }, { key: "assistant", label: "Assistente financeiro", icon: Sparkles },
-  { key: "subscription", label: "Plano e assinatura", icon: WalletCards }, { key: "settings", label: "Configurações", icon: Settings },
+  { key: "settings", label: "Configurações", icon: Settings },
 ]
 
 // O segundo grupo da sidebar começa no Assistente; achar pelo nome evita que remover um item do menu desloque a divisão.
@@ -160,7 +160,7 @@ function Brand() { return <div className="brand-lockup"><span className="brand-l
 function AppSidebar({ current, navigate, name, email, logout }: { current: ViewKey; navigate: (key: ViewKey) => void; name: string; email: string; logout: () => void }) {
   const { setOpenMobile } = useSidebar()
   const menu = (items: typeof navItems) => <SidebarMenu className="sidebar-menu-list">{items.map((item) => { const Icon = item.icon; return <SidebarMenuItem key={item.key}><SidebarMenuButton isActive={current === item.key} tooltip={item.label} className="sidebar-nav-button" onClick={() => { navigate(item.key); setOpenMobile(false) }}><Icon /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem> })}</SidebarMenu>
-  return <Sidebar collapsible="icon" className="synch-sidebar"><SidebarHeader className="sidebar-header"><Brand /></SidebarHeader><SidebarContent><SidebarGroup><SidebarGroupLabel className="sidebar-section-label">Gestão financeira</SidebarGroupLabel><SidebarGroupContent>{menu(navItems.slice(0, intelligenceStart))}</SidebarGroupContent></SidebarGroup><SidebarGroup className="sidebar-secondary-group"><SidebarGroupLabel className="sidebar-section-label">Inteligência e conta</SidebarGroupLabel><SidebarGroupContent>{menu(navItems.slice(intelligenceStart))}</SidebarGroupContent></SidebarGroup></SidebarContent><SidebarFooter className="sidebar-footer"><div className="sidebar-sync-status"><span><ShieldCheck /></span><div><strong>Dados protegidos</strong><small>Salvos neste dispositivo</small></div></div><DropdownMenu><DropdownMenuTrigger asChild><button className="profile-card"><span className="profile-avatar">{name.charAt(0).toUpperCase() || "G"}</span><span className="profile-copy"><strong>{name}</strong><small>{email}</small></span><ChevronDown size={16} /></button></DropdownMenuTrigger><DropdownMenuContent side="top" align="start" className="dark-menu w-56"><DropdownMenuLabel>Minha conta</DropdownMenuLabel><DropdownMenuItem onClick={() => { navigate("subscription"); setOpenMobile(false) }}><WalletCards /> Plano e assinatura</DropdownMenuItem><DropdownMenuItem onClick={() => { navigate("settings"); setOpenMobile(false) }}><UserRound /> Perfil</DropdownMenuItem><DropdownMenuItem onClick={() => { navigate("settings"); setOpenMobile(false) }}><ShieldCheck /> Segurança</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onClick={logout}><LogOut /> Sair</DropdownMenuItem></DropdownMenuContent></DropdownMenu></SidebarFooter></Sidebar>
+  return <Sidebar collapsible="icon" className="synch-sidebar"><SidebarHeader className="sidebar-header"><Brand /></SidebarHeader><SidebarContent><SidebarGroup><SidebarGroupLabel className="sidebar-section-label">Gestão financeira</SidebarGroupLabel><SidebarGroupContent>{menu(navItems.slice(0, intelligenceStart))}</SidebarGroupContent></SidebarGroup><SidebarGroup className="sidebar-secondary-group"><SidebarGroupLabel className="sidebar-section-label">Inteligência e conta</SidebarGroupLabel><SidebarGroupContent>{menu(navItems.slice(intelligenceStart))}</SidebarGroupContent></SidebarGroup></SidebarContent><SidebarFooter className="sidebar-footer"><div className="sidebar-sync-status"><span><ShieldCheck /></span><div><strong>Dados protegidos</strong><small>Salvos neste dispositivo</small></div></div><DropdownMenu><DropdownMenuTrigger asChild><button className="profile-card"><span className="profile-avatar">{name.charAt(0).toUpperCase() || "G"}</span><span className="profile-copy"><strong>{name}</strong><small>{email}</small></span><ChevronDown size={16} /></button></DropdownMenuTrigger><DropdownMenuContent side="top" align="start" className="dark-menu w-56"><DropdownMenuLabel>Minha conta</DropdownMenuLabel><DropdownMenuItem onClick={() => { navigate("settings"); setOpenMobile(false) }}><UserRound /> Perfil</DropdownMenuItem><DropdownMenuItem onClick={() => { navigate("settings"); setOpenMobile(false) }}><ShieldCheck /> Segurança</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onClick={logout}><LogOut /> Sair</DropdownMenuItem></DropdownMenuContent></DropdownMenu></SidebarFooter></Sidebar>
 }
 
 function Badge({ category }: { category: string }) { const color = categoryColor(category); return <span className="category-badge" style={{ color, borderColor: color + "55", background: color + "12" }}>{category}</span> }
@@ -549,7 +549,7 @@ function AssistantExperience({ items, budgets, hidden, setItems, setBudgets, rec
   </div>
 }
 
-function SettingsView({ prefs, setPrefs, plan, savePreferences }: { prefs: Preferences; setPrefs: Dispatch<SetStateAction<Preferences>>; plan: Plan; savePreferences: (p: Preferences) => Promise<Preferences | null> }) {
+function SettingsView({ prefs, setPrefs, savePreferences }: { prefs: Preferences; setPrefs: Dispatch<SetStateAction<Preferences>>; savePreferences: (p: Preferences) => Promise<Preferences | null> }) {
   const [saving, setSaving] = useState(false), [passwordOpen, setPasswordOpen] = useState(false), [newPassword, setNewPassword] = useState(""), [confirmPassword, setConfirmPassword] = useState(""), [changingPassword, setChangingPassword] = useState(false)
   const save = async () => { setSaving(true); await savePreferences(prefs); setSaving(false) }
   const changePassword = async () => {
@@ -560,7 +560,7 @@ function SettingsView({ prefs, setPrefs, plan, savePreferences }: { prefs: Prefe
     catch (error) { toast.error(error instanceof SynchApiError ? error.message : "Não foi possível atualizar a senha.") }
     finally { setChangingPassword(false) }
   }
-  return <div className="settings-grid"><section className="surface settings-card"><div className="panel-title-row"><div><h2>Perfil</h2><p>Informações da sua conta</p></div></div><div className="profile-settings"><span className="large-avatar">{prefs.name.charAt(0) || "G"}</span><div><strong>{prefs.name}</strong><p>{plan === "synch_ia" ? "Plano Synch IA" : "Plano Básico Vitalício"}</p></div></div><div className="settings-fields"><label><span>Nome completo</span><Input value={prefs.name} onChange={(e) => setPrefs((p) => ({ ...p, name: e.target.value }))} /></label><label><span>E-mail</span><Input type="email" value={prefs.email} disabled /></label></div><div className="settings-actions"><Button className="primary-button" disabled={saving} onClick={save}>{saving ? "Salvando..." : "Salvar alterações"}</Button><Button variant="outline" onClick={() => setPasswordOpen(true)}><LockKeyhole /> Alterar senha</Button></div></section><section className="surface settings-card"><div className="panel-title-row"><div><h2>Preferências</h2><p>Personalize sua experiência</p></div></div><div className="preference-list"><article><span><Bell /><div><strong>Notificações</strong><p>Alertas de orçamento e vencimentos</p></div></span><Switch checked={prefs.notifications} onCheckedChange={(value) => setPrefs((current) => ({ ...current, notifications: value }))} /></article><article><span><Moon /><div><strong>Aparência Synch</strong><p>Tema escuro oficial, otimizado para leitura</p></div></span><span className="settings-fixed-badge">Ativo</span></article><article><span><ShieldCheck /><div><strong>Resumo semanal</strong><p>Análise toda segunda-feira</p></div></span><Switch checked={prefs.weekly} onCheckedChange={(value) => setPrefs((current) => ({ ...current, weekly: value }))} /></article></div></section><Dialog open={passwordOpen} onOpenChange={setPasswordOpen}><DialogContent className="transaction-dialog"><DialogHeader><DialogTitle>Alterar senha</DialogTitle><DialogDescription>A nova senha é validada e salva no Supabase Auth.</DialogDescription></DialogHeader><div className="simple-form"><label className="field"><span>Nova senha</span><Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /></label><label className="field"><span>Confirmar nova senha</span><Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} /></label></div><DialogFooter><Button variant="outline" onClick={() => setPasswordOpen(false)}>Cancelar</Button><Button className="primary-button" disabled={changingPassword} onClick={changePassword}>{changingPassword ? "Salvando..." : "Atualizar senha"}</Button></DialogFooter></DialogContent></Dialog></div>
+  return <div className="settings-grid"><section className="surface settings-card"><div className="panel-title-row"><div><h2>Perfil</h2><p>Informações da sua conta</p></div></div><div className="profile-settings"><span className="large-avatar">{prefs.name.charAt(0) || "G"}</span><div><strong>{prefs.name}</strong><p>{prefs.email}</p></div></div><div className="settings-fields"><label><span>Nome completo</span><Input value={prefs.name} onChange={(e) => setPrefs((p) => ({ ...p, name: e.target.value }))} /></label><label><span>E-mail</span><Input type="email" value={prefs.email} disabled /></label></div><div className="settings-actions"><Button className="primary-button" disabled={saving} onClick={save}>{saving ? "Salvando..." : "Salvar alterações"}</Button><Button variant="outline" onClick={() => setPasswordOpen(true)}><LockKeyhole /> Alterar senha</Button></div></section><section className="surface settings-card"><div className="panel-title-row"><div><h2>Preferências</h2><p>Personalize sua experiência</p></div></div><div className="preference-list"><article><span><Bell /><div><strong>Notificações</strong><p>Alertas de orçamento e vencimentos</p></div></span><Switch checked={prefs.notifications} onCheckedChange={(value) => setPrefs((current) => ({ ...current, notifications: value }))} /></article><article><span><Moon /><div><strong>Aparência Synch</strong><p>Tema escuro oficial, otimizado para leitura</p></div></span><span className="settings-fixed-badge">Ativo</span></article><article><span><ShieldCheck /><div><strong>Resumo semanal</strong><p>Análise toda segunda-feira</p></div></span><Switch checked={prefs.weekly} onCheckedChange={(value) => setPrefs((current) => ({ ...current, weekly: value }))} /></article></div></section><Dialog open={passwordOpen} onOpenChange={setPasswordOpen}><DialogContent className="transaction-dialog"><DialogHeader><DialogTitle>Alterar senha</DialogTitle><DialogDescription>A nova senha é validada e salva no Supabase Auth.</DialogDescription></DialogHeader><div className="simple-form"><label className="field"><span>Nova senha</span><Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /></label><label className="field"><span>Confirmar nova senha</span><Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} /></label></div><DialogFooter><Button variant="outline" onClick={() => setPasswordOpen(false)}>Cancelar</Button><Button className="primary-button" disabled={changingPassword} onClick={changePassword}>{changingPassword ? "Salvando..." : "Atualizar senha"}</Button></DialogFooter></DialogContent></Dialog></div>
 }
 
 function MobileNav({ view, navigate, newItem }: { view: ViewKey; navigate: (v: ViewKey) => void; newItem: () => void }) {
@@ -615,8 +615,8 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: () => Promise<void>
 
 export default function HomePage() {
   const [view, setView] = useState<ViewKey>("overview"), [month, setMonth] = useState<MonthKey>(monthKeyAt(0)), [query, setQuery] = useState(""), [hidden, setHidden] = useState(false)
-  const sync = useSynchData(() => setView("subscription"))
-  const { status, transactions: items, accounts, budgets, recurring, goals, preferences: prefs, plan, invoicePayments, invoiceAdjustments, categories: categoryNames } = sync
+  const sync = useSynchData()
+  const { status, transactions: items, accounts, budgets, recurring, goals, preferences: prefs, invoicePayments, invoiceAdjustments, categories: categoryNames } = sync
   const ledger: LocalLedger = { version: 2, accounts, items, payments: invoicePayments, adjustments: invoiceAdjustments }
   const setPrefs = (action: SetStateAction<Preferences>) => { const next = typeof action === "function" ? (action as (p: Preferences) => Preferences)(prefs) : action; sync.savePreferences(next) }
   const setBudgets = (action: SetStateAction<Record<string, number>>) => { const next = typeof action === "function" ? (action as (p: Record<string, number>) => Record<string, number>)(budgets) : action; sync.saveBudgets(next) }
@@ -653,16 +653,6 @@ export default function HomePage() {
   const [modalOpen, setModalOpen] = useState(false), [editing, setEditing] = useState<number | null>(null), [form, setForm] = useState<FormState>(defaultForm), [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null)
   const [commandOpen, setCommandOpen] = useState(false), [importOpen, setImportOpen] = useState(false), [importDrafts, setImportDrafts] = useState<Transaction[]>([]), [online, setOnline] = useState(true)
   useMotionEffects(view, month)
-  // Quem não tem Synch IA nunca chega a ver o chat do Assistente -- nem uma prévia bloqueada: o redirecionamento
-  // acontece antes de renderizar a tela, então some pra quem não pagou e só volta a aparecer depois da assinatura
-  // confirmada. Espera `status === "authenticated"` pra não julgar pelo plano padrão ("gratis") antes do bootstrap
-  // real carregar (ex.: um link direto ?view=assistant, que muda a view antes dos dados chegarem).
-  useEffect(() => {
-    if (view === "assistant" && plan !== "synch_ia" && status === "authenticated") {
-      toast.info("O Assistente financeiro (texto e voz) é exclusivo do plano Synch IA. Assine para liberar o chat.")
-      setView("subscription")
-    }
-  }, [view, plan, status])
   useEffect(() => {
     const updateOnline = () => setOnline(navigator.onLine)
     updateOnline(); window.addEventListener("online", updateOnline); window.addEventListener("offline", updateOnline)
@@ -744,7 +734,6 @@ export default function HomePage() {
     goals: ["Metas", "Acompanhe seus objetivos financeiros"],
     reports: ["Relatórios", "Entenda a evolução do seu dinheiro"],
     assistant: ["Assistente financeiro", "Insights calculados pelos seus dados"],
-    subscription: ["Plano e assinatura", "Gerencie seu acesso e utilização"],
     settings: ["Configurações", "Gerencie seu perfil e preferências"],
   }
   const content = {
@@ -759,8 +748,7 @@ export default function HomePage() {
     goals: <GoalsView goals={goals} setGoals={setGoals} hidden={hidden} />,
     reports: <ReportsView items={items.filter(isAnalytical)} exportCsv={exportCsv} hidden={hidden} />,
     assistant: <AssistantExperience items={items} budgets={budgets} hidden={hidden} setItems={setItemsFromChildren} setBudgets={setBudgets} recurring={recurring} setRecurring={setRecurring} goals={goals} setGoals={setGoals} accounts={accounts} month={month} userName={prefs.name} />,
-    subscription: <SubscriptionView plan={plan} />,
-    settings: <SettingsView prefs={prefs} setPrefs={setPrefs} plan={plan} savePreferences={sync.savePreferences} />,
+    settings: <SettingsView prefs={prefs} setPrefs={setPrefs} savePreferences={sync.savePreferences} />,
   }[view]
   if (status === "loading") return <div className="auth-loading"><div className="auth-loading-logo"><img src="/synch-cash-logo.png" alt="Synch Cash" /></div><span /></div>
   if (status === "unauthenticated") return <LoginScreen onAuthenticated={sync.refresh} />

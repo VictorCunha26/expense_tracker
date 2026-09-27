@@ -6,7 +6,6 @@ import json
 import os
 import re
 import unicodedata
-import urllib.parse
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -22,37 +21,16 @@ import synch_ia
 
 CAKTO_WEBHOOK_SECRET = os.getenv("CAKTO_WEBHOOK_SECRET")
 
-# So existe um plano pago (Synch IA, com tudo -- contas ilimitadas,
-# parcelas/recorrencias, relatorios completos, importacao E o Assistente
-# por texto e voz). O link de checkout reaproveita o produto que ja
-# existia como "Basico" na Cakto (R$ 149,90/ano).
-CAKTO_PLANOS = {
-    "synch_ia": {
-        "oferta_id": "syw8q2x",
-        "checkout_url": "https://pay.cakto.com.br/syw8q2x",
-        "nome": "Synch IA",
-        "preco": "R$ 149,90/ano",
-        "parcelado": "12x de R$ 15,57",
-    },
-}
-CAKTO_OFERTA_PARA_PLANO = {
-    "syw8q2x": "synch_ia",
-}
-
-# Acesso vitalicio Basico: taxa unica (nao e assinatura, nao e o Synch IA) exigida pra criar
-# conta -- ver _cadastro_autorizado. "psh8aeu" e o data.offer.id real, confirmado num pagamento
-# de teste (o data.checkout, "1097259", e o produto/funil, nao a oferta -- a URL de checkout
-# concatena os dois com "_", mas so o offer.id entra na comparacao aqui).
-#
-# Nota: antes desta correcao, "psh8aeu_1097259" (a URL inteira, nao o offer.id) estava na
-# CAKTO_OFERTA_PARA_PLANO acima como se desse Synch IA -- nunca bateu com nenhum webhook real
-# (nenhum offer.id vem com esse sufixo), entao nao tinha ninguem "presa" nessa oferta.
+# Acesso vitalicio: taxa unica exigida pra criar conta -- ver _cadastro_autorizado. Quem tem
+# conta usa todas as funcionalidades (nao existe plano pago nem limite por plano).
+# "psh8aeu" e o data.offer.id real, confirmado num pagamento de teste (o data.checkout,
+# "1097259", e o produto/funil, nao a oferta -- a URL de checkout concatena os dois com
+# "_", mas so o offer.id entra na comparacao aqui).
 CAKTO_OFERTA_BASICO_VITALICIO = {
     id.strip() for id in os.getenv("CAKTO_OFERTAS_BASICO_VITALICIO", "psh8aeu").split(",") if id.strip()
 }
 CAKTO_CHECKOUT_BASICO_VITALICIO = os.getenv("CAKTO_CHECKOUT_BASICO_VITALICIO", "https://pay.cakto.com.br/psh8aeu_1097259")
 
-PLANOS_ORDEM = {"gratis": 0, "synch_ia": 1}
 CAKTO_EVENTOS_ATIVA = {
     "purchase_approved", "subscription_created",
     "subscription_renewed", "subscription_resumed",
@@ -61,11 +39,6 @@ CAKTO_EVENTOS_INATIVA = {
     "subscription_canceled", "subscription_renewal_refused",
     "subscription_paused", "refund", "chargeback", "purchase_refused",
 }
-
-LIMITE_GRATIS_CONTAS = 1
-LIMITE_GRATIS_CARTOES = 1
-LIMITE_GRATIS_TRANSACOES_MES = 100
-LIMITE_GRATIS_METAS = 1
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
@@ -212,45 +185,6 @@ def com_supabase(f):
 
 def _uid():
     return session["user_id"]
-
-
-# ------------------------------------------------------------------
-# Planos (Gratis / Synch IA)
-# ------------------------------------------------------------------
-
-def _plano_usuario(supabase):
-    """'gratis' ou 'synch_ia'. So o webhook da Cakto grava essa linha --
-    'gratis' e o padrao pra quem nunca assinou nada."""
-    try:
-        linha = (
-            supabase.table("assinaturas").select("plano")
-            .eq("user_id", _uid()).execute().data
-        )
-    except Exception:
-        return "gratis"
-    plano = (linha[0].get("plano") if linha else None) or "gratis"
-    return plano if plano in PLANOS_ORDEM else "gratis"
-
-
-def _plano_permite(plano_usuario, plano_minimo):
-    return PLANOS_ORDEM.get(plano_usuario, 0) >= PLANOS_ORDEM.get(plano_minimo, 0)
-
-
-def _link_assinatura(plano):
-    """Link de checkout com o e-mail da conta ja preenchido, pra o
-    pagamento bater certinho com a conta na hora do webhook."""
-    info = CAKTO_PLANOS.get(plano)
-    if not info:
-        return None
-    email = session.get("email") or ""
-    if not email:
-        return info["checkout_url"]
-    query = urllib.parse.urlencode({"email": email, "confirmEmail": email})
-    return f"{info['checkout_url']}?{query}"
-
-
-def _erro_plano(motivo):
-    return json_error("PLAN_LIMIT", motivo, 403, upgradeUrl=_link_assinatura("synch_ia"))
 
 
 # ------------------------------------------------------------------
@@ -834,14 +768,6 @@ def api_login():
     session["user_id"] = resposta.user.id
     session["email"] = resposta.user.email
 
-    # Rede de seguranca: se a Cakto avisou um pagamento antes desta conta
-    # existir (webhook guardou em cakto_pendencias), aplica aqui tambem --
-    # nao deveria sobrar nenhuma, mas login e barato e nunca deve travar por isso.
-    try:
-        _aplicar_pendencia_cakto(conectar_admin(), resposta.user.id, resposta.user.email)
-    except Exception:
-        pass
-
     logado = conectar_como_usuario(session["access_token"])
     return json_ok({"user": _serializar_preferencias(_preferencias(logado), session["email"])})
 
@@ -855,8 +781,7 @@ def api_register():
     if not email or len(senha) < 6:
         return json_error("VALIDATION", "Informe e-mail e uma senha com pelo menos 6 caracteres.", 422)
 
-    # Cadastro exige ter pago o acesso vitalicio Basico com este e-mail (taxa unica, nao e
-    # o Synch IA). Quem ja pagou aparece em cakto_pendencias pelo webhook; sem isso, nao cria
+    # Cadastro exige ter pago o acesso vitalicio com este e-mail (taxa unica). Quem ja pagou aparece em cakto_pendencias pelo webhook; sem isso, nao cria
     # a conta -- e nem chega a chamar o Supabase Auth (que ja dispararia e-mail de confirmacao).
     if not _cadastro_autorizado(email):
         return json_error(
@@ -874,16 +799,9 @@ def api_register():
     except Exception as erro:
         return json_error("AUTH_ERROR", _mensagem_erro_auth(erro), 422)
 
-    # Se essa pessoa ja pagou na Cakto com esse e-mail antes de criar a conta,
-    # o webhook guardou o plano em cakto_pendencias (sem conta ainda, sem
-    # user_id pra marcar). Agora que a conta existe, aplica de uma vez --
-    # sem isso, quem pagou primeiro e cadastrou depois ficaria no Gratis.
-    try:
-        usuario_id = getattr(resposta.user, "id", None) if resposta and resposta.user else None
-        if usuario_id:
-            _aplicar_pendencia_cakto(conectar_admin(), usuario_id, email)
-    except Exception:
-        pass
+    # A autorizacao de cadastro (pagamento do acesso vitalicio) ja foi usada.
+    if resposta and resposta.user:
+        _consumir_autorizacao_cadastro(email)
 
     return json_ok({
         "user": {"name": nome or email.split("@")[0], "email": email, "notifications": True, "weekly": True},
@@ -1037,7 +955,6 @@ def api_bootstrap(supabase):
         "recurring": [_serializar_recorrente(r) for r in _recorrentes(supabase)],
         "goals": [_serializar_meta(m) for m in _metas(supabase)],
         "preferences": _serializar_preferencias(_preferencias(supabase), session.get("email")),
-        "plan": _plano_usuario(supabase),
     })
 
 
@@ -1096,20 +1013,6 @@ def api_criar_transacao(supabase):
     total = float(corpo.get("amount"))
     parcelas = max(1, int(corpo.get("installments") or 1))
     data_base = corpo.get("date") or date.today().isoformat()
-
-    plano = _plano_usuario(supabase)
-    if not _plano_permite(plano, "synch_ia"):
-        if parcelas > 1:
-            return _erro_plano("Parcelar uma compra é um recurso do plano Synch IA. Assine para dividir em várias vezes.")
-        if campos["recorrente"]:
-            return _erro_plano("Repetir uma transação todo mês é um recurso do plano Synch IA. Assine para automatizar lançamentos fixos.")
-        mes_lancamento = data_base[:7]
-        no_mes = sum(1 for t in _transacoes(supabase) if (t.get("data") or "")[:7] == mes_lancamento)
-        if no_mes >= LIMITE_GRATIS_TRANSACOES_MES:
-            return _erro_plano(
-                f"O plano Grátis permite até {LIMITE_GRATIS_TRANSACOES_MES} movimentações por mês. "
-                "Assine o Synch IA para lançar sem limite."
-            )
 
     novas = _parcelas(campos, campos["nome_despesa"], total, parcelas, data_base)
     criadas = supabase.table("despesas").insert(novas).execute().data or []
@@ -1194,20 +1097,6 @@ def api_criar_conta(supabase):
     tipo = corpo.get("type") or "Conta corrente"
     if tipo not in TIPOS_CONTA:
         return json_error("VALIDATION", "Tipo de conta inválido.", 422)
-
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        existentes = _contas(supabase)
-        cartoes = sum(1 for c in existentes if c.get("tipo") == "Cartão de crédito")
-        outras = len(existentes) - cartoes
-        estourou = (
-            (tipo == "Cartão de crédito" and cartoes >= LIMITE_GRATIS_CARTOES)
-            or (tipo != "Cartão de crédito" and outras >= LIMITE_GRATIS_CONTAS)
-        )
-        if estourou:
-            return _erro_plano(
-                f"O plano Grátis permite {LIMITE_GRATIS_CONTAS} conta e {LIMITE_GRATIS_CARTOES} cartão. "
-                "Assine o Synch IA para ter contas e cartões ilimitados."
-            )
 
     campos = {
         "nome": nome, "tipo": tipo,
@@ -1297,12 +1186,6 @@ def api_salvar_orcamentos(supabase):
     corpo = _corpo()
     if not isinstance(corpo, dict):
         return json_error("VALIDATION", "Envie um mapa de categoria para limite.", 422)
-
-    # Definir o limite de uma categoria que o usuario ja tem (as padrao ou as que ele
-    # criou) vale em qualquer plano; o gate so pega nome que nao e categoria nenhuma.
-    existentes = set(_orcamentos(supabase)) | set(_nomes_categorias(supabase))
-    if [c for c in corpo if c not in existentes] and not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return _erro_plano("Criar uma categoria de orçamento nova é um recurso do plano Synch IA. Assine para ter orçamentos ilimitados.")
 
     linhas = []
     for categoria, limite in corpo.items():
@@ -1436,8 +1319,6 @@ def api_criar_recorrente(supabase):
     valor = corpo.get("amount")
     if not nome or not isinstance(valor, (int, float)) or valor <= 0:
         return json_error("VALIDATION", "Preencha os dados da recorrência.", 422)
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return _erro_plano("Criar uma recorrência é um recurso do plano Synch IA. Assine para automatizar lançamentos fixos.")
 
     tipo = "receita" if corpo.get("type") == "income" else "despesa"
     campos = {
@@ -1501,9 +1382,6 @@ def api_criar_meta(supabase):
     alvo = corpo.get("target")
     if not nome or not isinstance(alvo, (int, float)) or alvo <= 0:
         return json_error("VALIDATION", "Preencha os dados da meta.", 422)
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        if len(_metas(supabase)) >= LIMITE_GRATIS_METAS:
-            return _erro_plano(f"O plano Grátis permite {LIMITE_GRATIS_METAS} meta financeira. Assine o Synch IA para ter metas ilimitadas.")
 
     criada = supabase.table("metas").insert({
         "user_id": _uid(), "nome": nome,
@@ -1804,9 +1682,6 @@ def api_importar_transacoes(supabase):
     """O parse do CSV/OFX e revisao acontecem no front (ja tem parser
     testado em lib/transaction-values.ts); aqui so recebe as linhas ja
     revisadas e confirmadas pelo usuario e grava em lote."""
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return _erro_plano("Importar um arquivo CSV é um recurso do plano Synch IA. Assine para importar suas transações.")
-
     linhas = _corpo().get("transactions")
     if not isinstance(linhas, list) or not linhas:
         return json_error("VALIDATION", "Nenhuma transação para importar.", 422)
@@ -1922,35 +1797,7 @@ def api_resolver_issue(supabase, issue_id):
 
 
 # ------------------------------------------------------------------
-# Assinatura (Synch IA)
-# ------------------------------------------------------------------
-
-@app.route("/api/v1/billing/subscription", methods=["GET"])
-@com_supabase
-def api_assinatura(supabase):
-    plano = _plano_usuario(supabase)
-    info = CAKTO_PLANOS.get(plano)
-    return json_ok({
-        "plan": plano,
-        "planName": info["nome"] if info else "Grátis",
-        "status": "active" if plano != "gratis" else "none",
-        "renewalAt": None,
-        "checkoutUrl": _link_assinatura("synch_ia"),
-    })
-
-
-@app.route("/api/v1/billing/subscription/cancel", methods=["POST"])
-@com_supabase
-def api_cancelar_assinatura(supabase):
-    # Nao existe cancelamento self-service aqui: a Cakto e a fonte da
-    # verdade do pagamento, e so o webhook dela muda o plano de verdade.
-    return json_ok({
-        "message": "Para cancelar, use o link de gerenciamento enviado no e-mail de confirmação da compra na Cakto.",
-    })
-
-
-# ------------------------------------------------------------------
-# Cakto: webhook que libera/troca/cancela o plano do usuario
+# Cakto: webhook do pagamento do acesso vitalicio (libera o cadastro)
 #
 # Mantido no caminho ORIGINAL (fora de /api/v1) porque e a URL ja
 # cadastrada no painel da Cakto -- mudar aqui quebraria pagamentos em
@@ -1969,35 +1816,18 @@ def _cakto_assinatura_valida(corpo_bruto, timestamp, assinatura_recebida):
     return hmac.compare_digest(esperada, recebida)
 
 
-def _aplicar_pendencia_cakto(admin, user_id, email):
-    """Se a Cakto avisou um pagamento (ou cancelamento) antes desta conta
-    existir, o webhook guardou o estado em cakto_pendencias por e-mail
-    (ver webhook_cakto). Ao criar a conta ou entrar com esse e-mail,
-    aplica esse estado uma vez em 'assinaturas' e limpa a pendencia --
-    assim quem pagou antes de ter conta continua com o plano pago na
-    Cakto, sem depender de pedir pra Cakto reenviar o webhook."""
+def _consumir_autorizacao_cadastro(email):
+    admin = conectar_admin()
     if admin is None:
         return
-    chave = _chave_email(email)
-    if not chave:
-        return
     try:
-        pendencias = admin.table("cakto_pendencias").select("*").eq("email", chave).execute().data
-        if not pendencias:
-            return
-        pendencia = pendencias[0]
-        admin.table("assinaturas").upsert({
-            "user_id": user_id, "plano": pendencia.get("plano") or "gratis",
-            "cakto_evento": pendencia.get("cakto_evento"), "cakto_id": pendencia.get("cakto_id"),
-            "atualizada_em": datetime.utcnow().isoformat(),
-        }).execute()
-        admin.table("cakto_pendencias").delete().eq("email", chave).execute()
+        admin.table("cakto_pendencias").delete().eq("email", _chave_email(email)).execute()
     except Exception:
-        pass  # nao pode travar login/cadastro por causa disso -- o webhook tenta de novo no proximo evento
+        pass  # nao pode travar o cadastro por isso; a conta ja existe e o e-mail nao cadastra de novo
 
 
 def _cadastro_autorizado(email):
-    """Cadastro so e permitido pra quem pagou o acesso vitalicio Basico com esse
+    """Cadastro so e permitido pra quem pagou o acesso vitalicio com esse
     e-mail (o webhook grava isso em cakto_pendencias -- ver webhook_cakto). Sem
     nenhuma oferta configurada (CAKTO_OFERTAS_BASICO_VITALICIO vazia), a exigencia
     fica desligada e todo cadastro e permitido, como era antes desse recurso."""
@@ -2056,51 +1886,22 @@ def webhook_cakto():
     if not email or admin is None:
         return "", 200
 
-    if oferta_id in CAKTO_OFERTA_BASICO_VITALICIO:
-        # Acesso vitalicio Basico (taxa unica): so autoriza CADASTRO por esse e-mail
-        # (ver _cadastro_autorizado). Nunca muda o plano de quem ja tem conta -- essa
-        # oferta nao e o Synch IA, e quem ja se cadastrou nao precisa de nada daqui.
-        usuario = _achar_usuario_por_email(admin, email)
-        if not usuario:
-            if evento in CAKTO_EVENTOS_ATIVA:
-                admin.table("cakto_pendencias").upsert({
-                    "email": email, "plano": "gratis",
-                    "cakto_evento": evento, "cakto_id": dados.get("id"),
-                    "atualizada_em": datetime.utcnow().isoformat(),
-                }).execute()
-            else:
-                # Reembolso/chargeback antes de criar a conta: revoga a autorizacao pendente.
-                admin.table("cakto_pendencias").delete().eq("email", email).execute()
+    if oferta_id not in CAKTO_OFERTA_BASICO_VITALICIO:
+        return "", 200  # outra oferta da Cakto -- nao libera nada aqui
+
+    # Autoriza o CADASTRO por esse e-mail (ver _cadastro_autorizado). Quem ja
+    # tem conta nao precisa de nada daqui.
+    if _achar_usuario_por_email(admin, email):
         return "", 200
-
     if evento in CAKTO_EVENTOS_ATIVA:
-        plano = CAKTO_OFERTA_PARA_PLANO.get(oferta_id)
-        if not plano:
-            return "", 200
-    else:
-        plano = "gratis"
-
-    usuario = _achar_usuario_por_email(admin, email)
-    if not usuario:
-        # Pagou (ou cancelou) mas ainda nao tem conta no app -- ou usou outro
-        # e-mail no checkout. Guarda o estado por e-mail; api_register e
-        # api_login aplicam isso em 'assinaturas' na primeira vez que essa
-        # pessoa criar a conta ou entrar com esse e-mail.
         admin.table("cakto_pendencias").upsert({
-            "email": email, "plano": plano,
+            "email": email, "plano": "gratis",  # a coluna so aceita gratis/synch_ia (legado)
             "cakto_evento": evento, "cakto_id": dados.get("id"),
             "atualizada_em": datetime.utcnow().isoformat(),
         }).execute()
-        return "", 200
-
-    admin.table("assinaturas").upsert({
-        "user_id": usuario.id, "plano": plano,
-        "cakto_evento": evento, "cakto_id": dados.get("id"),
-        "atualizada_em": datetime.utcnow().isoformat(),
-    }).execute()
-    # A conta ja existia, entao ja foi aplicado direto -- limpa uma pendencia
-    # antiga desse e-mail (se sobrou uma de antes da conta existir).
-    admin.table("cakto_pendencias").delete().eq("email", email).execute()
+    else:
+        # Reembolso/chargeback antes de criar a conta: revoga a autorizacao pendente.
+        admin.table("cakto_pendencias").delete().eq("email", email).execute()
     return "", 200
 
 
@@ -2159,9 +1960,6 @@ def _analitica(t):
 @app.route("/api/v1/assistant/messages", methods=["POST"])
 @com_supabase
 def api_assistente(supabase):
-    if not _plano_permite(_plano_usuario(supabase), "synch_ia"):
-        return _erro_plano("O Assistente financeiro (texto e voz) é exclusivo do plano Synch IA.")
-
     corpo = _corpo()
     pergunta = (corpo.get("message") or "").strip()
     if not pergunta:
